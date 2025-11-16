@@ -1,6 +1,6 @@
 # geovision
 
-An Android Application for Spatio-Temporal Geolocation
+A new Flutter project.
 
 ## Getting Started
 
