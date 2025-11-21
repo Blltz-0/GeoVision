@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:geovision/pages/home_view.dart';
+
+import 'home_add.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -41,19 +44,29 @@ class _HomePageState extends State<HomePage> {
                     scrollDirection: Axis.horizontal,
                     child: Row(
                       children: [
-                        Container(
-                          height: 75,
-                          width: 75,
-                          color: Colors.red,
+                        GestureDetector(
+                          onTap: () {
+                            Navigator.push(context, MaterialPageRoute(builder: (context) => const HomeAddPage()),);
+                          },
+                          child: Container(
+                            height: 75,
+                            width: 75,
+                            color: Colors.red,
+                          ),
                         ),
                         SizedBox(width: 5),
                         ...List.generate(6, (index) {
                             return Row(
                               children: [
-                                Container(
-                                height: 75,
-                                width: 75,
-                                color: Colors.amber,
+                                GestureDetector(
+                                  onTap: () {
+                                    Navigator.push(context, MaterialPageRoute(builder: (context) => const HomeViewPage()),);
+                                  },
+                                  child: Container(
+                                  height: 75,
+                                  width: 75,
+                                  color: Colors.amber,
+                                  ),
                                 ),
                                 SizedBox(width: 5),
                               ]
@@ -84,10 +97,15 @@ class _HomePageState extends State<HomePage> {
                         crossAxisSpacing: 10,
                       ),
                       itemBuilder: (BuildContext context, int index){
-                        return Container(
-                          height: 5,
-                          width: 100,
-                          color: Colors.amber,
+                        return GestureDetector(
+                          onTap: () {
+                            Navigator.push(context, MaterialPageRoute(builder: (context) => const HomeViewPage()),);
+                          },
+                          child: Container(
+                            height: 5,
+                            width: 100,
+                            color: Colors.amber,
+                          ),
                         );
                       },
                       itemCount: 6,
