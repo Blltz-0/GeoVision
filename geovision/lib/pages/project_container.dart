@@ -20,7 +20,7 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
   int _currentIndex=1;
 
   late final List<Widget> _tabs = [
-    CameraPage(),
+    CameraPage(projectName: widget.projectName,),
     ImagesPage(projectName: widget.projectName,),
     MapPage(),
   ];
