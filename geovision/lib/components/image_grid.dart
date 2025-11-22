@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../pages/image_view.dart';
 import 'image_card.dart';
 
 
@@ -8,6 +9,8 @@ class ImageGrid extends StatelessWidget{
   final int columns;
   final int itemCount;
   final List<Map<String, dynamic>> dataList;
+  final String projectName;
+  final VoidCallback onBack;
 
   //Constructor
   const ImageGrid({
@@ -15,6 +18,8 @@ class ImageGrid extends StatelessWidget{
     required this.columns,
     required this.itemCount,
     required this.dataList,
+    required this.projectName,
+    required this.onBack,
   });
 
   @override
@@ -32,7 +37,25 @@ class ImageGrid extends StatelessWidget{
         final item = dataList[index];
 
         // 4. Pass that data into your Card
-        return ImageCard(imagePath: item['path'],);
+        return GestureDetector(
+          onTap: () {
+            List<String> allPaths = dataList.map((item) => item['path'] as String).toList();
+
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ImageView(
+                  allImagePaths: allPaths,
+                  initialIndex: index,
+                  projectName: projectName,
+                )
+              )
+            ).then((_){
+              onBack();
+            });
+          },
+          child: ImageCard(imagePath: item['path'],)
+        );
       },
       itemCount: dataList.length,
     );

@@ -6,10 +6,6 @@ class MapPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        automaticallyImplyLeading: false,
-        title: const Text('GeoVision'),
-      ),
       body: Center(
         child: Text('Map page!'),
       ),

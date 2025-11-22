@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../components/image_grid.dart';
+import '../../functions/metadata_handle.dart';
 
 class ImagesPage extends StatefulWidget {
   final String projectName;
@@ -24,7 +25,15 @@ class _ImagesPageState extends State<ImagesPage> {
   @override
   void initState() {
     super.initState();
-    _loadImages(); // Load data on startup
+    _initPage(); // Load data on startup
+  }
+
+  Future<void> _initPage() async {
+    // 1. Repair data first
+    await MetadataService.syncProjectData(widget.projectName);
+
+    // 2. Then load images
+    _loadImages();
   }
 
   Future<void> _loadImages() async {
@@ -57,10 +66,6 @@ class _ImagesPageState extends State<ImagesPage> {
     }).toList();
 
     return Scaffold(
-      appBar: AppBar(
-        automaticallyImplyLeading: false,
-        title: const Text('GeoVision'),
-      ),
       body: _isLoading ? const Center(child: CircularProgressIndicator()) : SingleChildScrollView(
         child: Container(
           padding: EdgeInsets.all(10),
@@ -75,6 +80,10 @@ class _ImagesPageState extends State<ImagesPage> {
                 columns: 3,
                 itemCount: gridData.length,
                 dataList: gridData,
+                projectName: widget.projectName,
+                onBack: (){
+                  _loadImages();
+                },
               ),
             ],
           ),

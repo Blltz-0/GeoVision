@@ -28,7 +28,10 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-
+      appBar: AppBar(
+        automaticallyImplyLeading: false,
+        title: const Text('GeoVision'),
+      ),
       body: _tabs[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,

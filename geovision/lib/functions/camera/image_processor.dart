@@ -35,3 +35,4 @@ Future<String> cropSquareImage(String filePath) async {
 
   return filePath;
 }
+

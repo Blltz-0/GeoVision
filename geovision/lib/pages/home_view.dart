@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:geovision/pages/project_container.dart';
 import '../components/image_grid.dart';
+import '../functions/metadata_handle.dart';
 
 // 1. Change to StatefulWidget
 class HomeViewPage extends StatefulWidget {
@@ -25,7 +26,15 @@ class _HomeViewPageState extends State<HomeViewPage> {
   @override
   void initState() {
     super.initState();
-    _loadImages(); // Load images immediately when page opens
+    _initPage(); // Load data on startup
+  }
+
+  Future<void> _initPage() async {
+    // 1. Repair data first
+    await MetadataService.syncProjectData(widget.title);
+
+    // 2. Then load images
+    _loadImages();
   }
 
   // --- LOGIC: Get the specific images folder ---
@@ -91,6 +100,10 @@ class _HomeViewPageState extends State<HomeViewPage> {
                 columns: 3,
                 itemCount: gridData.length,
                 dataList: gridData,
+                projectName: widget.title,
+                onBack: () {
+                  _loadImages();
+                },
               ),
             ],
           ),

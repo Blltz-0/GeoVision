@@ -1,10 +1,12 @@
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:geovision/functions/metadata_handle.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 
-import '../../components/image_processor.dart';
+import '../../functions/camera/image_processor.dart';
 
 
 class CameraPage extends StatefulWidget {
@@ -20,7 +22,7 @@ class CameraPage extends StatefulWidget {
   State<CameraPage> createState() => _CameraPageState();
 }
 
-class _CameraPageState extends State<CameraPage> {
+class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver{
   CameraController? _controller;
   Future<void>? _initializeControllerFuture;
   bool _isProcessing = false;
@@ -29,6 +31,7 @@ class _CameraPageState extends State<CameraPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _setupCamera();
   }
 
@@ -45,28 +48,41 @@ class _CameraPageState extends State<CameraPage> {
       return;
     }
 
-    setState(() {
-      _isProcessing = true;
-    });
+    setState(() {_isProcessing = true;});
 
     try {
-      final XFile rawImage = await _controller!.takePicture();
+      final Position? position = await _getCurrentLocation();
 
+      final XFile rawImage = await _controller!.takePicture();
       await compute(cropSquareImage, rawImage.path);
 
       final appDir = await getApplicationDocumentsDirectory();
-      final String fileName = 'img_${DateTime.now().millisecondsSinceEpoch}.jpg';
 
-      final String savePath = '${appDir.path}/projects/${widget.projectName}/images/$fileName';
+      final String fileId = 'img_${DateTime.now().millisecondsSinceEpoch}.jpg';
 
-      await File(rawImage.path).copy(savePath);
+      final String imagePath = '${appDir.path}/projects/${widget.projectName}/images/$fileId.jpg';
 
+      await File(rawImage.path).copy(imagePath);
       await File(rawImage.path).delete();
+
+      if (position != null) {
+        await MetadataService.embedLocationIntoImage(
+            imagePath,
+            position.latitude,
+            position.longitude
+        );
+      }
+
+      await MetadataService.saveToCsv(
+        projectName: widget.projectName,
+        imagePath: imagePath,
+        position: position,
+      );
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Image saved to: $savePath'),
+            content: Text('Image saved to: $imagePath'),
           ),
         );
       }
@@ -83,12 +99,35 @@ class _CameraPageState extends State<CameraPage> {
       }
     }
   }
+
+
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _controller?.dispose();
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final CameraController? cameraController = _controller;
+
+    // App is not visible or Controller is null? Do nothing.
+    if (cameraController == null || !cameraController.value.isInitialized) {
+      return;
+    }
+
+    if (state == AppLifecycleState.inactive) {
+      // CASE 1: User minimized the app or turned off screen
+      // Stop the camera to save battery and release resource
+      cameraController.dispose();
+    } else if (state == AppLifecycleState.resumed) {
+      // CASE 2: User came back to the app
+      // Restart the camera
+      _setupCamera();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -109,11 +148,6 @@ class _CameraPageState extends State<CameraPage> {
           // 1. Get the ratio directly from the controller
           var cameraRatio = _controller!.value.aspectRatio;
 
-          // 2. ROBUST FIX: Normalize the ratio.
-          // Sensors usually report landscape ratios (e.g., 4:3 = 1.33).
-          // In Portrait mode, we need the frame to be tall (e.g., 3:4).
-          // So, if the ratio is "wide" (greater than 1), we invert it for our container
-          // to ensure the container is taller than it is wide.
           if (cameraRatio > 1) {
             cameraRatio = 1 / cameraRatio;
           }
@@ -170,11 +204,38 @@ class _CameraPageState extends State<CameraPage> {
         ),
         child: _isProcessing
             ? const CircularProgressIndicator(color: Colors.white)
-            : const Icon(Icons.camera, color: Colors.white, size: 40),
+            : const Icon(Icons.circle, color: Colors.white, size: 40),
       ),
     );
   }
 
+  Future<Position?> _getCurrentLocation() async {
+    bool serviceEnabled;
+    LocationPermission permission;
 
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      return Future.error('Location services are disabled.');
+    }
+
+    permission = await Geolocator.checkPermission();
+    if(permission == LocationPermission.denied){
+      permission = await Geolocator.requestPermission();
+      if(permission == LocationPermission.denied){
+        return Future.error('Location permissions are denied');
+      }
+    }
+
+    if(permission == LocationPermission.deniedForever){
+      return null;
+    }
+
+    return await Geolocator.getCurrentPosition(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 100,
+      ),
+    );
+  }
 }
 
