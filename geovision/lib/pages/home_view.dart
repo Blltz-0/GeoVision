@@ -40,7 +40,6 @@ class _HomeViewPageState extends State<HomeViewPage> {
     // 3. Check if it exists. If not, create it!
     if (!await imagesDir.exists()) {
       await imagesDir.create(recursive: true);
-      print("📁 Created new image folder at: $imagesDirPath");
     }
 
     // 4. List files and filter for images (jpg, png, jpeg)
@@ -144,18 +143,6 @@ class _HomeViewPageState extends State<HomeViewPage> {
             ),
           ],
         ),
-      ),
-      // BONUS: A button to test adding an empty file (Optional)
-      floatingActionButton: FloatingActionButton(
-        onPressed: () async {
-          // Quick test to create a fake file to see if the grid updates
-          final appDir = await getApplicationDocumentsDirectory();
-          final path = '${appDir.path}/projects/${widget.title}/images/test_${DateTime.now().millisecondsSinceEpoch}.jpg';
-          final newFile = File(path);
-          await newFile.create();
-          _loadImages(); // Refresh list
-        },
-        child: const Icon(Icons.add_a_photo),
       ),
     );
   }
