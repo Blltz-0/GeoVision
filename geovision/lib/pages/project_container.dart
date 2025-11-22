@@ -5,7 +5,12 @@ import 'package:geovision/pages/project_tabs/map.dart';
 
 
 class ProjectContainerPage extends StatefulWidget {
-  const ProjectContainerPage({super.key});
+  final String projectName;
+
+  const ProjectContainerPage({
+    super.key,
+    required this.projectName,
+  });
 
   @override
   State<ProjectContainerPage> createState() => _ProjectContainerPageState();
@@ -14,10 +19,10 @@ class ProjectContainerPage extends StatefulWidget {
 class _ProjectContainerPageState extends State<ProjectContainerPage> {
   int _currentIndex=1;
 
-  final List<Widget> _tabs = [
-    const CameraPage(),
-    const ImagesPage(),
-    const MapPage(),
+  late final List<Widget> _tabs = [
+    CameraPage(),
+    ImagesPage(projectName: widget.projectName,),
+    MapPage(),
   ];
 
   @override

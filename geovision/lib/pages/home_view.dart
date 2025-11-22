@@ -1,19 +1,101 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:geovision/pages/project_container.dart';
+import '../components/image_grid.dart';
 
-class HomeViewPage extends StatelessWidget {
-  const HomeViewPage({super.key});
+// 1. Change to StatefulWidget
+class HomeViewPage extends StatefulWidget {
+  final String title;
+
+  const HomeViewPage({
+    super.key,
+    required this.title,
+  });
+
+  @override
+  State<HomeViewPage> createState() => _HomeViewPageState();
+}
+
+class _HomeViewPageState extends State<HomeViewPage> {
+  // This list stores the actual image files found on the phone
+  List<File> _imageFiles = [];
+  bool _isLoading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadImages(); // Load images immediately when page opens
+  }
+
+  // --- LOGIC: Get the specific images folder ---
+  Future<void> _loadImages() async {
+    // 1. Get App Documents Directory
+    final appDir = await getApplicationDocumentsDirectory();
+
+    // 2. Construct path: .../projects/[ProjectName]/images
+    final imagesDirPath = '${appDir.path}/projects/${widget.title}/images';
+    final imagesDir = Directory(imagesDirPath);
+
+    // 3. Check if it exists. If not, create it!
+    if (!await imagesDir.exists()) {
+      await imagesDir.create(recursive: true);
+      print("📁 Created new image folder at: $imagesDirPath");
+    }
+
+    // 4. List files and filter for images (jpg, png, jpeg)
+    if (await imagesDir.exists()) {
+      final files = imagesDir.listSync().map((item) => item as File).where((item) {
+        final ext = item.path.split('.').last.toLowerCase();
+        return ext == 'jpg' || ext == 'png' || ext == 'jpeg';
+      }).toList();
+
+      setState(() {
+        _imageFiles = files;
+        _isLoading = false;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
+
+    // 5. Prepare data for your ImageGrid
+    // We convert the File list into a List of Maps, because your grid likely expects Maps
+    final List<Map<String, dynamic>> gridData = _imageFiles.map((file) {
+      return {
+        "path": file.path, // The ImageGrid needs this to display the image
+        "file": file,      // Passing the actual File object is helpful too
+      };
+    }).toList();
+
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        title: const Text('Third Page'),
-
+        title: Text(widget.title), // Use widget.title in State class
       ),
-      body: Center(
-        child: Text('You made it to the new page!'),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('${widget.title} Images'),
+              const SizedBox(height: 20),
+
+              // 6. Pass the real data to the grid
+              _imageFiles.isEmpty
+                  ? const Center(child: Text("No images found."))
+                  : ImageGrid(
+                columns: 3,
+                itemCount: gridData.length,
+                dataList: gridData,
+              ),
+            ],
+          ),
+        ),
       ),
       bottomNavigationBar: BottomAppBar(
         color: Colors.white,
@@ -26,26 +108,26 @@ class HomeViewPage extends StatelessWidget {
               },
               child: Container(
                   height: 40,
-                  width:100,
+                  width: 100,
                   decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(10),
                       color: Colors.white,
                       border: Border.all(
-                        color: Colors.black54.withValues(alpha: 0.3),
+                        color: Colors.black54.withValues(alpha: 0.3), // fixed withValues syntax
                         width: 2,
                       )
                   ),
                   alignment: Alignment.center,
-                  child: Text("Back")
+                  child: const Text("Back")
               ),
             ),
             GestureDetector(
               onTap: () {
-                Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => const ProjectContainerPage()),);
+                Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => ProjectContainerPage(projectName: widget.title,)),);
               },
               child: Container(
                   height: 40,
-                  width:100,
+                  width: 100,
                   decoration: BoxDecoration(
                       borderRadius: BorderRadius.circular(10),
                       color: Colors.blueAccent,
@@ -55,14 +137,25 @@ class HomeViewPage extends StatelessWidget {
                       )
                   ),
                   alignment: Alignment.center,
-                  child: Text("Confirm",style: TextStyle(
+                  child: const Text("Confirm", style: TextStyle(
                     color: Colors.white,
                   ),)
               ),
             ),
-
           ],
         ),
+      ),
+      // BONUS: A button to test adding an empty file (Optional)
+      floatingActionButton: FloatingActionButton(
+        onPressed: () async {
+          // Quick test to create a fake file to see if the grid updates
+          final appDir = await getApplicationDocumentsDirectory();
+          final path = '${appDir.path}/projects/${widget.title}/images/test_${DateTime.now().millisecondsSinceEpoch}.jpg';
+          final newFile = File(path);
+          await newFile.create();
+          _loadImages(); // Refresh list
+        },
+        child: const Icon(Icons.add_a_photo),
       ),
     );
   }

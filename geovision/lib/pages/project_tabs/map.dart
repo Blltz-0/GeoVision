@@ -8,7 +8,7 @@ class MapPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        title: const Text('Map Page'),
+        title: const Text('GeoVision'),
       ),
       body: Center(
         child: Text('Map page!'),
