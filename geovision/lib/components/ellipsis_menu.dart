@@ -1,30 +1,39 @@
 import 'package:flutter/material.dart';
 
 class EllipsisMenu extends StatelessWidget {
-  // 1. Define the functions we expect the parent to provide
   final VoidCallback onInfo;
   final VoidCallback onDelete;
+  final VoidCallback onTag; // <--- 1. NEW CALLBACK
 
   const EllipsisMenu({
     super.key,
     required this.onInfo,
     required this.onDelete,
+    required this.onTag, // <--- Require it
   });
 
   @override
   Widget build(BuildContext context) {
     return PopupMenuButton<String>(
-      // 2. Handle the selection
       onSelected: (String value) {
-        if (value == 'Info') {
-          onInfo(); // Call the parent's function
-        } else if (value == 'Delete') {
-          onDelete(); // Call the parent's function
-        }
+        if (value == 'Info') onInfo();
+        if (value == 'Delete') onDelete();
+        if (value == 'Tag') onTag();
       },
-      // 3. Draw the items
       itemBuilder: (BuildContext context) {
         return [
+          // 1. TAG OPTION (Add this first or where you prefer)
+          const PopupMenuItem(
+            value: 'Tag',
+            child: Row(
+              children: [
+                Icon(Icons.label, color: Colors.blue),
+                SizedBox(width: 10),
+                Text('Tag Image'),
+              ],
+            ),
+          ),
+          const PopupMenuDivider(), // Optional separator
           const PopupMenuItem(
             value: 'Info',
             child: Row(

@@ -27,7 +27,7 @@ class ProjectCard extends StatelessWidget{
         decoration: BoxDecoration(
           color: Colors.white,
           border: Border.all(
-              color: Colors.blueAccent.withValues(alpha: 0.3), // fixed withValues syntax
+              color: Colors.green.withValues(alpha: 0.3), // fixed withValues syntax
               width: 1
           ),
           borderRadius: BorderRadius.circular(8),
@@ -36,8 +36,8 @@ class ProjectCard extends StatelessWidget{
           crossAxisAlignment: CrossAxisAlignment.center,
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.folder, color: Colors.grey,),
-            Text(title),
+            Icon(Icons.folder, color: Colors.green,),
+            Text(title, style: TextStyle(color: Colors.green),),
           ],
         ),
       ),

@@ -3,6 +3,8 @@ import 'package:geovision/pages/project_tabs/camera.dart';
 import 'package:geovision/pages/project_tabs/images.dart';
 import 'package:geovision/pages/project_tabs/map.dart';
 
+import '../functions/metadata_handle.dart';
+
 
 class ProjectContainerPage extends StatefulWidget {
   final String projectName;
@@ -17,23 +19,78 @@ class ProjectContainerPage extends StatefulWidget {
 }
 
 class _ProjectContainerPageState extends State<ProjectContainerPage> {
+  List<Map<String, dynamic>> _projectClasses = [];
   int _currentIndex=1;
 
   late final List<Widget> _tabs = [
     CameraPage(projectName: widget.projectName,),
     ImagesPage(projectName: widget.projectName,),
-    MapPage(),
+    MapPage(projectName: widget.projectName,),
   ];
+
+  Future<void> _loadClasses() async {
+    final classes = await MetadataService.getClasses(widget.projectName);
+    setState(() => _projectClasses = classes);
+  }
+
+  void _showAddClassDialog() {
+    final nameCtrl = TextEditingController();
+    Color selectedColor = Colors.red; // Default
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("New Class"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: "Class Name")),
+            const SizedBox(height: 15),
+            const Text("Select Color:"),
+            const SizedBox(height: 10),
+            // Simple Color Picker Row
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [Colors.red, Colors.green, Colors.blue, Colors.orange, Colors.purple].map((c) {
+                return GestureDetector(
+                  onTap: () {
+                    selectedColor = c; // (Note: In a real StatefulWidget dialog, you'd need setState)
+                    Navigator.pop(ctx);
+                    _finalizeAddClass(nameCtrl.text, c); // Call helper
+                  },
+                  child: CircleAvatar(backgroundColor: c, radius: 15),
+                );
+              }).toList(),
+            )
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _finalizeAddClass(String name, Color color) async {
+    if (name.isEmpty) return;
+    await MetadataService.addClassDefinition(widget.projectName, name, color.value);
+    _loadClasses(); // Refresh list
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: Colors.lightGreenAccent,
         automaticallyImplyLeading: false,
-        title: const Text('GeoVision'),
+        centerTitle: true,
+        title: Image.asset(
+          'assets/logo.png',
+          height: 80, // Keep it constrained so it doesn't overflow
+          fit: BoxFit.contain, // Ensures it doesn't get cut off
+        ),
+
       ),
       body: _tabs[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
+        backgroundColor: Colors.lightGreenAccent,
         currentIndex: _currentIndex,
         onTap: (index) => setState(() => _currentIndex = index),
         items: const [

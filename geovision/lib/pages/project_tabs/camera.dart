@@ -2,10 +2,10 @@ import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:geovision/components/class_selector_dropdown.dart';
 import 'package:geovision/functions/metadata_handle.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
-
 import '../../functions/camera/image_processor.dart';
 
 
@@ -15,7 +15,6 @@ class CameraPage extends StatefulWidget {
   const CameraPage({
     super.key,
     required this.projectName,
-
   });
 
   @override
@@ -27,6 +26,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver{
   Future<void>? _initializeControllerFuture;
   bool _isProcessing = false;
   List<CameraDescription> cameras = [];
+  String _activeTag = "Unclassified";
 
   @override
   void initState() {
@@ -44,63 +44,85 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver{
   }
 
   Future<void> _takePicture() async {
-    if(!_controller!.value.isInitialized || _isProcessing){
+    // 1. Block if camera is not ready OR if we are in "Cooldown"
+    if (!_controller!.value.isInitialized || _isProcessing) {
       return;
     }
 
-    setState(() {_isProcessing = true;});
+    // 2. Lock the Button (Start Cooldown)
+    if (mounted) {
+      setState(() => _isProcessing = true);
+    }
 
     try {
+      // 3. Hardware Work (Get Location & Snap Photo)
+      final String tagForThisPhoto = _activeTag;
+      final XFile rawImage = await _controller!.takePicture();
       final Position? position = await _getCurrentLocation();
 
-      final XFile rawImage = await _controller!.takePicture();
-      await compute(cropSquareImage, rawImage.path);
+      // 4. Background Work (Fire and Forget)
+      // We do NOT await this. It runs on its own time.
+      _processImage(rawImage, position, tagForThisPhoto);
 
-      final appDir = await getApplicationDocumentsDirectory();
+      // 5. THE DELAY (Artificial Cooldown)
+      // We force the user to wait 1 second before the button unlocks.
+      // This gives the phone time to breathe.
+      await Future.delayed(const Duration(milliseconds: 500));
 
-      final String fileId = 'img_${DateTime.now().millisecondsSinceEpoch}.jpg';
-
-      final String imagePath = '${appDir.path}/projects/${widget.projectName}/images/$fileId.jpg';
-
-      await File(rawImage.path).copy(imagePath);
-      await File(rawImage.path).delete();
-
-      if (position != null) {
-        await MetadataService.embedLocationIntoImage(
-            imagePath,
-            position.latitude,
-            position.longitude
-        );
-      }
-
-      await MetadataService.saveToCsv(
-        projectName: widget.projectName,
-        imagePath: imagePath,
-        position: position,
-      );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Image saved to: $imagePath'),
-          ),
-        );
-      }
-
-    }catch (e) {
+    } catch (e) {
       if (kDebugMode) {
-        print(e);
+        print("Error capture: $e");
       }
-    }finally {
+    } finally {
+      // 6. Unlock the Button
       if (mounted) {
-        setState(() {
-          _isProcessing = false;
-        });
+        setState(() => _isProcessing = false);
       }
     }
   }
 
+  Future<void> _processImage(XFile rawImage, Position? position, String className) async {
+    try {
+      // 1. CROP
+      await compute(cropSquareImage, rawImage.path);
 
+      // 2. PREPARE PATHS
+      final appDir = await getApplicationDocumentsDirectory();
+      final projectDir = Directory('${appDir.path}/projects/${widget.projectName}/images');
+
+      // --- NEW NAMING LOGIC ---
+      final String fileName = await MetadataService.generateNextFileName(projectDir, widget.projectName, className);
+      final String imagePath = '${projectDir.path}/$fileName';
+      // ------------------------
+
+      // 3. SAVE IMAGE
+      await File(rawImage.path).copy(imagePath);
+      await File(rawImage.path).delete();
+
+      // 4. INJECT EXIF
+      if (position != null) {
+        await MetadataService.embedMetadata(
+          filePath: imagePath,
+          lat: position.latitude,
+          lng: position.longitude,
+          className: className,
+        );
+      }
+
+      // 5. SAVE CSV
+      await MetadataService.saveToCsv(
+        projectName: widget.projectName,
+        imagePath: imagePath,
+        position: position,
+        className: className,
+      );
+
+      print("✅ Saved as: $fileName");
+
+    } catch (e) {
+      print("❌ Background error: $e");
+    }
+  }
 
   @override
   void dispose() {
@@ -133,9 +155,24 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver{
   Widget build(BuildContext context) {
     final double screenWidth = MediaQuery.of(context).size.width;
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: buildCameraPreview(screenWidth),
+    return Stack(
+      children: [
+        Scaffold(
+          backgroundColor: Colors.black,
+          body: buildCameraPreview(screenWidth),
+        ),
+        Positioned(
+          top: 40, left: 0, right: 0,
+          child: ClassSelectorDropdown(
+            projectName: widget.projectName,
+            selectedClass: _activeTag,
+            showAllOption: false,
+            onClassSelected: (newClass) {
+              setState(() => _activeTag = newClass);
+            },
+          ),
+        ),
+      ]
     );
   }
 
@@ -191,20 +228,29 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver{
 
   Widget _buildCaptureButton() {
     return GestureDetector(
-      onTap: () {
-        _takePicture();
-      },
-      child: Container(
+      // If processing, do nothing on tap
+      onTap: _isProcessing ? null : _takePicture,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200), // Smooth fade
         height: 80,
         width: 80,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          border: Border.all(color: Colors.white, width: 4),
-          color: _isProcessing ? Colors.grey : Colors.transparent, // Visual feedback
+          border: Border.all(
+            // If processing, grey border. If ready, white border.
+              color: _isProcessing ? Colors.grey : Colors.white,
+              width: 4
+          ),
+          // If processing, fill with grey opacity.
+          color: _isProcessing ? Colors.grey.withValues(alpha: 0.5) : Colors.transparent,
         ),
         child: _isProcessing
-            ? const CircularProgressIndicator(color: Colors.white)
-            : const Icon(Icons.circle, color: Colors.white, size: 40),
+        // Optional: Show a tiny loader, or just the grey button
+            ? const Padding(
+          padding: EdgeInsets.all(20),
+          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+        )
+            : const Icon(Icons.camera, color: Colors.white, size: 40),
       ),
     );
   }

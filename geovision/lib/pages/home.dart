@@ -131,11 +131,14 @@ class _HomePageState extends State<HomePage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('GeoVision'),
-        shadowColor: Colors.black54,
-
-        backgroundColor: Colors.white,
-        elevation: 0.4,
+        backgroundColor: Colors.lightGreenAccent,
+        automaticallyImplyLeading: false,
+        centerTitle: true,
+        title: Image.asset(
+          'assets/logo.png',
+          height: 80, // Keep it constrained so it doesn't overflow
+          fit: BoxFit.contain, // Ensures it doesn't get cut off
+        ),
       ),
       body: SingleChildScrollView(
         child: Column(
@@ -217,10 +220,6 @@ class _HomePageState extends State<HomePage> {
                   )
                 ]
               ),
-            ),
-            Container(
-              color: Colors.green,
-              height: 200,
             ),
           ],
         ),

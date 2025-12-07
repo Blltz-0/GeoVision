@@ -79,8 +79,10 @@ class _HomeViewPageState extends State<HomeViewPage> {
 
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: Colors.lightGreenAccent,
         automaticallyImplyLeading: false,
-        title: Text(widget.title), // Use widget.title in State class
+        centerTitle: true,
+        title: Text("Open Project",style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -90,7 +92,7 @@ class _HomeViewPageState extends State<HomeViewPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('${widget.title} Images'),
+              Text('Project Images', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green),),
               const SizedBox(height: 20),
 
               // 6. Pass the real data to the grid
@@ -110,6 +112,7 @@ class _HomeViewPageState extends State<HomeViewPage> {
         ),
       ),
       bottomNavigationBar: BottomAppBar(
+        elevation: 2,
         color: Colors.white,
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -122,11 +125,11 @@ class _HomeViewPageState extends State<HomeViewPage> {
                   height: 40,
                   width: 100,
                   decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(20),
                       color: Colors.white,
                       border: Border.all(
-                        color: Colors.black54.withValues(alpha: 0.3), // fixed withValues syntax
-                        width: 2,
+                        color: Colors.black,
+                        width: 1,
                       )
                   ),
                   alignment: Alignment.center,
@@ -141,16 +144,16 @@ class _HomeViewPageState extends State<HomeViewPage> {
                   height: 40,
                   width: 100,
                   decoration: BoxDecoration(
-                      borderRadius: BorderRadius.circular(10),
-                      color: Colors.blueAccent,
+                      borderRadius: BorderRadius.circular(20),
+                      color: Colors.lightGreenAccent,
                       border: Border.all(
-                        color: Colors.black54.withValues(alpha: 0.1),
-                        width: 2,
+                        color: Colors.black,
+                        width: 1,
                       )
                   ),
                   alignment: Alignment.center,
-                  child: const Text("Confirm", style: TextStyle(
-                    color: Colors.white,
+                  child: const Text("Select Project", style: TextStyle(
+                    color: Colors.black,
                   ),)
               ),
             ),
