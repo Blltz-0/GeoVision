@@ -1,13 +1,14 @@
+import 'dart:convert'; // ✅ Required for JSON
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:geovision/pages/project_container.dart';
 import '../components/image_grid.dart';
 import '../functions/metadata_handle.dart';
 
-// 1. Change to StatefulWidget
 class HomeViewPage extends StatefulWidget {
-  final String title;
+  final String title; // This acts as the projectName
 
   const HomeViewPage({
     super.key,
@@ -19,61 +20,96 @@ class HomeViewPage extends StatefulWidget {
 }
 
 class _HomeViewPageState extends State<HomeViewPage> {
-  // This list stores the actual image files found on the phone
   List<File> _imageFiles = [];
   bool _isLoading = true;
+
+  // ✅ 1. ADD MISSING VARIABLES
+  List<dynamic> _projectClasses = []; // Stores colors from JSON
+  Map<String, String> _cachedLabelMap = {}; // Stores labels from CSV
 
   @override
   void initState() {
     super.initState();
-    _initPage(); // Load data on startup
+    _initPage();
   }
 
   Future<void> _initPage() async {
-    // 1. Repair data first
     await MetadataService.syncProjectData(widget.title);
 
-    // 2. Then load images
-    _loadImages();
+    // ✅ 2. LOAD COLORS FIRST
+    await _loadClassColors();
+
+    // 3. THEN LOAD IMAGES
+    await _loadImages();
   }
 
-  // --- LOGIC: Get the specific images folder ---
-  Future<void> _loadImages() async {
-    // 1. Get App Documents Directory
-    final appDir = await getApplicationDocumentsDirectory();
+  // ✅ 3. NEW FUNCTION TO READ CLASS COLORS
+  Future<void> _loadClassColors() async {
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final classFile = File('${appDir.path}/projects/${widget.title}/classes.json');
 
-    // 2. Construct path: .../projects/[ProjectName]/images
+      if (await classFile.exists()) {
+        String jsonString = await classFile.readAsString();
+        setState(() {
+          _projectClasses = jsonDecode(jsonString);
+        });
+      }
+    } catch (e) {
+      if (kDebugMode) print("Error loading classes: $e");
+    }
+  }
+
+  Future<void> _loadImages() async {
+    setState(() => _isLoading = true); // Show loading while working
+
+    final appDir = await getApplicationDocumentsDirectory();
     final imagesDirPath = '${appDir.path}/projects/${widget.title}/images';
     final imagesDir = Directory(imagesDirPath);
 
-    // 3. Check if it exists. If not, create it!
     if (!await imagesDir.exists()) {
       await imagesDir.create(recursive: true);
     }
 
-    // 4. List files and filter for images (jpg, png, jpeg)
     if (await imagesDir.exists()) {
+      // ✅ 4. READ CSV TO MAP FILENAMES TO LABELS
+      final csvData = await MetadataService.readCsvData(widget.title);
+      Map<String, String> tempMap = {};
+
+      for (var row in csvData) {
+        String filename = row['path'].split(Platform.pathSeparator).last;
+        tempMap[filename] = row['class'] ?? "Unclassified";
+      }
+      _cachedLabelMap = tempMap; // Save to state
+
+      // 5. LIST ACTUAL FILES
       final files = imagesDir.listSync().map((item) => item as File).where((item) {
         final ext = item.path.split('.').last.toLowerCase();
         return ext == 'jpg' || ext == 'png' || ext == 'jpeg';
       }).toList();
 
+      // Sort by newest
+      files.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+
       setState(() {
         _imageFiles = files;
         _isLoading = false;
       });
+    } else {
+      setState(() => _isLoading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
 
-    // 5. Prepare data for your ImageGrid
-    // We convert the File list into a List of Maps, because your grid likely expects Maps
+    // ✅ 5. PREPARE GRID DATA WITH LABELS
+    // We map the file + the label we found in the CSV
     final List<Map<String, dynamic>> gridData = _imageFiles.map((file) {
+      String filename = file.path.split(Platform.pathSeparator).last;
       return {
-        "path": file.path, // The ImageGrid needs this to display the image
-        "file": file,      // Passing the actual File object is helpful too
+        "path": file.path,
+        "label": _cachedLabelMap[filename], // <--- PASS THE LABEL FOR COLOR LOOKUP
       };
     }).toList();
 
@@ -82,7 +118,10 @@ class _HomeViewPageState extends State<HomeViewPage> {
         backgroundColor: Colors.lightGreenAccent,
         automaticallyImplyLeading: false,
         centerTitle: true,
-        title: Text("Open Project",style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),),
+        title: const Text(
+          "Open Project",
+          style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),
+        ),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -92,20 +131,25 @@ class _HomeViewPageState extends State<HomeViewPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('Project Images', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green),),
+              const Text(
+                'Project Images',
+                style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green),
+              ),
               const SizedBox(height: 20),
 
-              // 6. Pass the real data to the grid
               _imageFiles.isEmpty
                   ? const Center(child: Text("No images found."))
                   : ImageGrid(
                 columns: 3,
                 itemCount: gridData.length,
                 dataList: gridData,
-                projectName: widget.title,
+                projectName: widget.title, // ✅ Fix: Use widget.title
                 onBack: () {
                   _loadImages();
+                  _loadClassColors();
                 },
+                // ✅ 6. PASS THE CLASS COLORS
+                projectClasses: _projectClasses,
               ),
             ],
           ),
@@ -130,15 +174,18 @@ class _HomeViewPageState extends State<HomeViewPage> {
                       border: Border.all(
                         color: Colors.black,
                         width: 1,
-                      )
-                  ),
+                      )),
                   alignment: Alignment.center,
-                  child: const Text("Back")
-              ),
+                  child: const Text("Back")),
             ),
             GestureDetector(
               onTap: () {
-                Navigator.pushReplacement(context, MaterialPageRoute(builder: (context) => ProjectContainerPage(projectName: widget.title,)),);
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ProjectContainerPage(projectName: widget.title),
+                  ),
+                );
               },
               child: Container(
                   height: 40,
@@ -149,13 +196,14 @@ class _HomeViewPageState extends State<HomeViewPage> {
                       border: Border.all(
                         color: Colors.black,
                         width: 1,
-                      )
-                  ),
+                      )),
                   alignment: Alignment.center,
-                  child: const Text("Select Project", style: TextStyle(
-                    color: Colors.black,
-                  ),)
-              ),
+                  child: const Text(
+                    "Select Project",
+                    style: TextStyle(
+                      color: Colors.black,
+                    ),
+                  )),
             ),
           ],
         ),

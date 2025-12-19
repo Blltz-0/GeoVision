@@ -1,3 +1,4 @@
+import 'dart:convert'; // ✅ NEEDED FOR JSON
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -25,22 +26,45 @@ class ImagesPage extends StatefulWidget {
 }
 
 class _ImagesPageState extends State<ImagesPage> {
-  List<File> _imageFiles=[];
-  bool _isLoading=true;
+  List<File> _imageFiles = [];
+  bool _isLoading = true;
   String _filterClass = "All";
+
+  // ✅ 1. STORE RAW CLASS DATA (For Colors)
+  List<dynamic> _projectClasses = [];
+
+  // ✅ 2. STORE FILE->LABEL MAP (To know which image is what)
+  Map<String, String> _cachedLabelMap = {};
 
   @override
   void initState() {
     super.initState();
-    _initPage(); // Load data on startup
+    _initPage();
   }
 
   Future<void> _initPage() async {
-    // 1. Repair data first
     await MetadataService.syncProjectData(widget.projectName);
 
-    // 2. Then load images
-    _loadImages();
+    // ✅ Load Colors and Images
+    await _loadClassColors();
+    await _loadImages();
+  }
+
+  // ✅ NEW: Read classes.json so we have the colors
+  Future<void> _loadClassColors() async {
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final classFile = File('${appDir.path}/projects/${widget.projectName}/classes.json');
+
+      if (await classFile.exists()) {
+        String jsonString = await classFile.readAsString();
+        setState(() {
+          _projectClasses = jsonDecode(jsonString); // Raw list of maps
+        });
+      }
+    } catch (e) {
+      if (kDebugMode) print("Error loading classes: $e");
+    }
   }
 
   Future<void> _loadImages() async {
@@ -51,18 +75,18 @@ class _ImagesPageState extends State<ImagesPage> {
     final imagesDir = Directory(imagesDirPath);
 
     if (await imagesDir.exists()) {
-      // 1. LOAD CSV DATA FIRST
-      // We need this to know which class belongs to which image
+      // 1. LOAD CSV DATA
       final csvData = await MetadataService.readCsvData(widget.projectName);
 
-      // 2. Create a "Lookup Map" for speed
-      // Key: Filename (e.g., "img_123.jpg"), Value: The Class Name (e.g., "Crack")
-      Map<String, String> imageClasses = {};
+      // 2. Build Lookup Map
+      Map<String, String> tempMap = {};
       for (var row in csvData) {
         String filename = row['path'].split(Platform.pathSeparator).last;
-        // Default to "Unclassified" if the class column is missing/empty
-        imageClasses[filename] = row['class'] ?? "Unclassified";
+        tempMap[filename] = row['class'] ?? "Unclassified";
       }
+
+      // ✅ Save this map to state so build() can use it later
+      _cachedLabelMap = tempMap;
 
       // 3. Get Physical Files
       final allFiles = imagesDir.listSync();
@@ -75,20 +99,17 @@ class _ImagesPageState extends State<ImagesPage> {
       })
           .toList();
 
-      // 4. APPLY THE FILTER
+      // 4. APPLY FILTER
       if (_filterClass != "All") {
         validImages = validImages.where((file) {
           String filename = file.path.split(Platform.pathSeparator).last;
-
-          // Look up the class in our map. Default to "Unclassified" if not found.
-          String fileClass = imageClasses[filename] ?? "Unclassified";
-
-          // Keep file ONLY if the class matches the filter
+          // Use the map we just built
+          String fileClass = _cachedLabelMap[filename] ?? "Unclassified";
           return fileClass == _filterClass;
         }).toList();
       }
 
-      // 5. SORT & UPDATE STATE
+      // 5. SORT
       validImages.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
 
       setState(() {
@@ -101,69 +122,49 @@ class _ImagesPageState extends State<ImagesPage> {
   }
 
   Future<void> _importImage() async {
+    // ... (Your existing permission logic) ...
     if (Platform.isAndroid) {
       var status = await Permission.accessMediaLocation.status;
-      if (!status.isGranted) {
-        status = await Permission.accessMediaLocation.request();
-      }
-
-      // Also check standard storage/photos permission if needed
-      if (await Permission.photos.request().isDenied) {
-        // Handle denied access (optional)
-        return;
-      }
+      if (!status.isGranted) status = await Permission.accessMediaLocation.request();
+      if (await Permission.photos.request().isDenied) return;
     }
 
-
     final ImagePicker picker = ImagePicker();
-
-    // 1. Pick the Image
     final XFile? pickedFile = await picker.pickImage(source: ImageSource.gallery);
 
-    if (pickedFile == null) return; // User cancelled
+    if (pickedFile == null) return;
 
     setState(() => _isLoading = true);
 
     try {
-      // 2. Read Metadata (GPS & Date) from the original file
+      // ... (Your existing EXIF logic) ...
       final exif = await Exif.fromPath(pickedFile.path);
       final latLong = await exif.getLatLong();
       await exif.close();
 
-      // 3. Create a Position object from the EXIF data
-      // We fill unknown fields with 0 because we only care about Lat/Lng
       Position? position;
       if (latLong != null) {
         position = Position(
           latitude: latLong.latitude,
           longitude: latLong.longitude,
           timestamp: DateTime.now(),
-          accuracy: 0,
-          altitude: 0,
-          heading: 0,
-          speed: 0,
-          speedAccuracy: 0,
-          altitudeAccuracy: 0,
-          headingAccuracy: 0,
+          accuracy: 0, altitude: 0, heading: 0, speed: 0, speedAccuracy: 0, altitudeAccuracy: 0, headingAccuracy: 0,
         );
       }
 
-      // 4. Prepare Paths
       final appDir = await getApplicationDocumentsDirectory();
       final String fileId = 'img_import_${DateTime.now().millisecondsSinceEpoch}';
       final String newPath = '${appDir.path}/projects/${widget.projectName}/images/$fileId.jpg';
 
-      // 5. Copy File to Project Folder
       await File(pickedFile.path).copy(newPath);
 
-      // 6. Save to CSV
       await MetadataService.saveToCsv(
         projectName: widget.projectName,
         imagePath: newPath,
-        position: position, // Pass the extracted position
+        position: position,
       );
 
-      // 7. Refresh Grid
+      // Reload to update grid
       _loadImages();
 
       if (mounted) {
@@ -173,44 +174,42 @@ class _ImagesPageState extends State<ImagesPage> {
       }
 
     } catch (e) {
-      if (kDebugMode) {
-        print("Import Error: $e");
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Failed to import: $e")),
-        );
-      }
+      if (kDebugMode) print("Import Error: $e");
     } finally {
       setState(() => _isLoading = false);
     }
   }
 
-
-
   @override
   Widget build(BuildContext context) {
+    // ✅ 3. PREPARE GRID DATA WITH LABELS
+    // We map the physical file list to a Map containing path AND label
     final List<Map<String, dynamic>> gridData = _imageFiles.map((file) {
-      return {"path": file.path};
+      String filename = file.path.split(Platform.pathSeparator).last;
+      return {
+        "path": file.path,
+        "label": _cachedLabelMap[filename], // Pass the class string here!
+      };
     }).toList();
 
     return Scaffold(
-      body: _isLoading ? const Center(child: CircularProgressIndicator()) : SingleChildScrollView(
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : SingleChildScrollView(
         child: Container(
-          padding: EdgeInsets.all(10),
+          padding: const EdgeInsets.all(10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              SizedBox(height:20),
-              Text('${widget.projectName} Gallery',style: TextStyle(fontSize: 20),textAlign: TextAlign.center,),
+              const SizedBox(height: 20),
+              Text(
+                '${widget.projectName} Gallery',
+                style: const TextStyle(fontSize: 20),
+                textAlign: TextAlign.center,
+              ),
               ClassSelectorDropdown(
-                // Pass the Project Name
                 projectName: widget.projectName,
-
-                // Pass your local state variable
                 selectedClass: _filterClass,
-
-                // Define what happens when a button is clicked
                 onClassSelected: (String newClass) {
                   setState(() {
                     _filterClass = newClass;
@@ -218,7 +217,7 @@ class _ImagesPageState extends State<ImagesPage> {
                   _loadImages();
                 },
               ),
-              SizedBox(height:20),
+              const SizedBox(height: 20),
               _imageFiles.isEmpty
                   ? const Center(child: Text("No images yet"))
                   : ImageGrid(
@@ -226,15 +225,22 @@ class _ImagesPageState extends State<ImagesPage> {
                 itemCount: gridData.length,
                 dataList: gridData,
                 projectName: widget.projectName,
-                onBack: (){
+                onBack: () {
                   _loadImages();
+                  _loadClassColors(); // Refresh colors too if they changed
                 },
+                // ✅ 4. PASS THE RAW CLASS LIST
+                projectClasses: _projectClasses,
               ),
             ],
           ),
         ),
       ),
-      floatingActionButton: FloatingActionButton(onPressed: _importImage, tooltip: 'Import Image', child: Icon(Icons.add)),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _importImage,
+        tooltip: 'Import Image',
+        child: const Icon(Icons.add),
+      ),
     );
   }
 }

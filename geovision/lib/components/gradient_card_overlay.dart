@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 class GradientCardOverlay extends StatelessWidget {
-  final Color? indicatorColor; // The little colored dot for the class
+  final Color? indicatorColor;
 
   const GradientCardOverlay({
     super.key,
@@ -10,22 +10,29 @@ class GradientCardOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 1. FIX: Change fallback from Red back to Black.
+    // If a class color exists, use it. If not, use a dark shadow.
+    final Color baseColor = indicatorColor ?? Colors.black;
+
     return Container(
-      // The Gradient Scrim
-      decoration: const BoxDecoration(
+      decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: [
-            Colors.transparent,
-            Colors.black54, // The dark shadow
-            Colors.black87,
+            // Top: Invisible
+            baseColor.withOpacity(0.0),
+
+            // Middle: Soft tint
+            baseColor.withOpacity(0.4),
+
+            // Bottom: Strong lighting (Very opaque)
+            baseColor.withOpacity(0.9),
           ],
-          stops: [0.0, 0.6, 1.0], // Starts fading in at 60% down
+          // The "Strong Lighting" stops
+          stops: const [0.3, 0.7, 1.0],
         ),
       ),
-      padding: const EdgeInsets.all(8.0),
-      alignment: Alignment.bottomLeft, // Text sits at bottom left
     );
   }
 }

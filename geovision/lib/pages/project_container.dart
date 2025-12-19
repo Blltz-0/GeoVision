@@ -3,6 +3,7 @@ import 'package:geovision/pages/project_tabs/camera.dart';
 import 'package:geovision/pages/project_tabs/images.dart';
 import 'package:geovision/pages/project_tabs/map.dart';
 
+import '../functions/export_service.dart';
 import '../functions/metadata_handle.dart';
 
 
@@ -21,6 +22,24 @@ class ProjectContainerPage extends StatefulWidget {
 class _ProjectContainerPageState extends State<ProjectContainerPage> {
   List<Map<String, dynamic>> _projectClasses = [];
   int _currentIndex=1;
+  bool _isExporting = false;
+
+  Future<void> _handleExport() async {
+    setState(() => _isExporting = true);
+
+    // Show a snackbar immediately
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Generating map and zipping project...')),
+    );
+
+    // Run the export service
+    await ExportService.exportProject(widget.projectName);
+
+    if (mounted) {
+      setState(() => _isExporting = false);
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    }
+  }
 
   late final List<Widget> _tabs = [
     CameraPage(projectName: widget.projectName,),
@@ -86,6 +105,19 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
           height: 80, // Keep it constrained so it doesn't overflow
           fit: BoxFit.contain, // Ensures it doesn't get cut off
         ),
+        actions: [
+          // If exporting, show spinner, otherwise show button
+          _isExporting
+              ? const Padding(
+            padding: EdgeInsets.all(12.0),
+            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+          )
+              : IconButton(
+            icon: const Icon(Icons.ios_share), // Or Icons.download / Icons.archive
+            tooltip: 'Export Project to ZIP',
+            onPressed: _handleExport,
+          ),
+        ],
 
       ),
       body: _tabs[_currentIndex],

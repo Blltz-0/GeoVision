@@ -1,18 +1,17 @@
 import 'package:flutter/material.dart';
-
 import '../pages/image_view.dart';
 import 'image_card.dart';
 
-
-class ImageGrid extends StatelessWidget{
-  //Properties
+class ImageGrid extends StatelessWidget {
   final int columns;
   final int itemCount;
   final List<Map<String, dynamic>> dataList;
   final String projectName;
   final VoidCallback onBack;
 
-  //Constructor
+  // ✅ DEFINITION ADDED HERE
+  final List<dynamic> projectClasses;
+
   const ImageGrid({
     super.key,
     required this.columns,
@@ -20,6 +19,8 @@ class ImageGrid extends StatelessWidget{
     required this.dataList,
     required this.projectName,
     required this.onBack,
+    // ✅ CONSTRUCTOR UPDATED HERE
+    required this.projectClasses,
   });
 
   @override
@@ -31,33 +32,56 @@ class ImageGrid extends StatelessWidget{
         mainAxisSpacing: 10,
         crossAxisSpacing: 10,
       ),
-      physics: NeverScrollableScrollPhysics(),
-      itemBuilder: (BuildContext context, int index) {
-        // 3. Grab the specific data for THIS position
+      physics: const NeverScrollableScrollPhysics(),
+      itemCount: dataList.length,
+      itemBuilder: (context, index) {
         final item = dataList[index];
+        final String imagePath = item['path'];
 
-        // 4. Pass that data into your Card
+        // 1. Get the class string (e.g. "Cat")
+        final String? csvClass = item['label'];
+
+        // 2. Find the Color manually from the raw list
+        Color? resolvedColor;
+
+        if (csvClass != null && csvClass.isNotEmpty) {
+          try {
+            // Robust match: trim spaces and ignore casing
+            final matchingClass = projectClasses.firstWhere(
+                    (cls) => cls['name'].toString().trim().toLowerCase() == csvClass.trim().toLowerCase()
+            );
+
+            // Convert int color to Color object
+            resolvedColor = Color(matchingClass['color']);
+
+          } catch (e) {
+            resolvedColor = null; // Class not found -> Black shadow
+          }
+        }
+
         return GestureDetector(
-          onTap: () {
-            List<String> allPaths = dataList.map((item) => item['path'] as String).toList();
-
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => ImageView(
-                  allImagePaths: allPaths,
-                  initialIndex: index,
-                  projectName: projectName,
-                )
-              )
-            ).then((_){
-              onBack();
-            });
-          },
-          child: ImageCard(imagePath: item['path'],)
+            onTap: () {
+              List<String> allPaths = dataList.map((item) => item['path'] as String).toList();
+              Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => ImageView(
+                        allImagePaths: allPaths,
+                        initialIndex: index,
+                        projectName: projectName,
+                      )
+                  )
+              ).then((_) {
+                onBack();
+              });
+            },
+            child: ImageCard(
+              imagePath: imagePath,
+              className: csvClass,
+              classColor: resolvedColor,
+            )
         );
       },
-      itemCount: dataList.length,
     );
   }
 }

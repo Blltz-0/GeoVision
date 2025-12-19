@@ -42,6 +42,7 @@ class _MapPageState extends State<MapPage> {
   LatLng? _currentLocation;
   DateTimeRange? _selectedDateRange;
   String _filterClass = "All";
+  int _heatmapKey = 0;
 
   MapMode _currentMode = MapMode.markers;
 
@@ -123,6 +124,7 @@ class _MapPageState extends State<MapPage> {
     setState(() {
       _markers = filteredMarkers;
       _heatmapData = heatmapPoints;
+      _heatmapKey++;
     });
   }
 
@@ -315,6 +317,7 @@ class _MapPageState extends State<MapPage> {
               // ---------------------------------------------
               if (_showHeatmap)
                 HeatMapLayer(
+                  key: ValueKey(_heatmapKey),
                   heatMapDataSource: InMemoryHeatMapDataSource(data: _heatmapData),
                   heatMapOptions: HeatMapOptions(
                     radius: 50,
