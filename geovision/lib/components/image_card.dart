@@ -19,7 +19,7 @@ class ImageCard extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.withOpacity(0.2)), // Fixed withValues to withOpacity (standard)
+        border: Border.all(color: Colors.grey.withValues(alpha:0.2)), // Fixed withValues to withOpacity (standard)
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
@@ -32,6 +32,8 @@ class ImageCard extends StatelessWidget {
               child: Image.file(
                 File(imagePath),
                 fit: BoxFit.cover,
+                cacheHeight: 300,
+                cacheWidth: 300,
                 errorBuilder: (context, error, stackTrace) {
                   return Container(
                     color: Colors.grey[300],

@@ -1,44 +1,72 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
-import '../functions/metadata_handle.dart'; // Import your service
+import '../functions/metadata_handle.dart';
 
 class CreateClassPage extends StatefulWidget {
   final String projectName;
 
-  const CreateClassPage({super.key, required this.projectName});
+  //Edit Mode if provided
+  final String? initialName;
+  final Color? initialColor;
+
+  const CreateClassPage({
+    super.key,
+    required this.projectName,
+    this.initialName,
+    this.initialColor,
+  });
 
   @override
   State<CreateClassPage> createState() => _CreateClassPageState();
 }
 
 class _CreateClassPageState extends State<CreateClassPage> {
-  // State variables
-  final TextEditingController _nameController = TextEditingController();
-  Color _currentColor = Colors.red; // Default start color
+  late TextEditingController _nameController;
+  late Color _currentColor;
 
-  // Helper to get HEX string (e.g., #FF0000)
+  bool get _isEditing => widget.initialName != null;
+
+  @override
+  void initState() {
+    super.initState();
+    // Pre-fill data if editing, otherwise use defaults
+    _nameController = TextEditingController(text: widget.initialName ?? "");
+    _currentColor = widget.initialColor ?? Colors.red;
+  }
+
   String get _hexCode {
-    return '#${_currentColor.value.toRadixString(16).toUpperCase().padLeft(8, '0').substring(2)}';
+    return '#${_currentColor.toARGB32().toRadixString(16).toUpperCase().padLeft(8, '0').substring(2)}';
   }
 
   Future<void> _saveClass() async {
-    if (_nameController.text.trim().isEmpty) {
+    final newName = _nameController.text.trim();
+    if (newName.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Please enter a class name")),
       );
       return;
     }
 
-    // Call your existing service
-    await MetadataService.addClassDefinition(
-      widget.projectName,
-      _nameController.text.trim(),
-      _currentColor.value,
-    );
+    if (_isEditing) {
+      // --- UPDATE EXISTING CLASS ---
+      // We pass the OLD name (widget.initialName) so the service knows what to look for
+      await MetadataService.updateClass(
+          widget.projectName,
+          widget.initialName!, // Old Name
+          newName,             // New Name
+          _currentColor.toARGB32()
+      );
+    } else {
+      // --- CREATE NEW CLASS ---
+      await MetadataService.addClassDefinition(
+        widget.projectName,
+        newName,
+        _currentColor.toARGB32(),
+      );
+    }
 
     if (mounted) {
-      // Return the new name so the previous page can auto-select it
-      Navigator.pop(context, _nameController.text.trim());
+      Navigator.pop(context, newName);
     }
   }
 
@@ -47,9 +75,9 @@ class _CreateClassPageState extends State<CreateClassPage> {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.lightGreenAccent,
-        title: const Text("Create New Class"),
+        // Change Title based on mode
+        title: Text(_isEditing ? "Edit Class" : "Create New Class"),
         actions: [
-          // Save Button
           IconButton(
             icon: const Icon(Icons.check),
             onPressed: _saveClass,
@@ -60,23 +88,20 @@ class _CreateClassPageState extends State<CreateClassPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ---------------------------------------------
-            // 1. PREVIEW SECTION
-            // ---------------------------------------------
+            // PREVIEW SECTION
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(20),
               color: Colors.grey[100],
               child: Column(
                 children: [
-                  // The "Chip" Preview
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                     decoration: BoxDecoration(
                         color: _currentColor,
                         borderRadius: BorderRadius.circular(20),
                         boxShadow: [
-                          BoxShadow(color: Colors.black.withOpacity(0.2), blurRadius: 5, offset: const Offset(0, 2))
+                          BoxShadow(color: Colors.black.withValues(alpha:0.2), blurRadius: 5, offset: const Offset(0, 2))
                         ]
                     ),
                     child: Text(
@@ -89,7 +114,6 @@ class _CreateClassPageState extends State<CreateClassPage> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  // The Hex Code
                   Text(
                     "HEX: $_hexCode",
                     style: TextStyle(
@@ -102,9 +126,7 @@ class _CreateClassPageState extends State<CreateClassPage> {
               ),
             ),
 
-            // ---------------------------------------------
-            // 2. INPUT SECTION
-            // ---------------------------------------------
+            // INPUT SECTION
             Padding(
               padding: const EdgeInsets.all(20.0),
               child: TextField(
@@ -115,15 +137,13 @@ class _CreateClassPageState extends State<CreateClassPage> {
                   border: OutlineInputBorder(),
                   prefixIcon: Icon(Icons.label_outline),
                 ),
-                onChanged: (val) => setState(() {}), // Updates preview text
+                onChanged: (val) => setState(() {}),
               ),
             ),
 
             const Divider(),
 
-            // ---------------------------------------------
-            // 3. PRESETS (Block Picker)
-            // ---------------------------------------------
+            // QUICK COLORS
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               child: Text("Quick Colors", style: TextStyle(fontWeight: FontWeight.bold)),
@@ -145,9 +165,7 @@ class _CreateClassPageState extends State<CreateClassPage> {
 
             const Divider(),
 
-            // ---------------------------------------------
-            // 4. CUSTOM WHEEL (Color Picker)
-            // ---------------------------------------------
+            // CUSTOM WHEEL
             const Padding(
               padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
               child: Text("Custom Color", style: TextStyle(fontWeight: FontWeight.bold)),
@@ -158,11 +176,10 @@ class _CreateClassPageState extends State<CreateClassPage> {
               enableAlpha: false,
               displayThumbColor: true,
               paletteType: PaletteType.hsvWithHue,
-              labelTypes: const [], // Hides the internal text inputs since we made our own
+              labelTypes: const [],
               pickerAreaHeightPercent: 0.7,
             ),
-
-            const SizedBox(height: 50), // Bottom padding
+            const SizedBox(height: 50),
           ],
         ),
       ),

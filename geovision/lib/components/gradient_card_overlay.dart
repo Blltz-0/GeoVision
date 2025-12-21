@@ -21,13 +21,13 @@ class GradientCardOverlay extends StatelessWidget {
           end: Alignment.bottomCenter,
           colors: [
             // Top: Invisible
-            baseColor.withOpacity(0.0),
+            baseColor.withValues(alpha:0.0),
 
             // Middle: Soft tint
-            baseColor.withOpacity(0.4),
+            baseColor.withValues(alpha:0.4),
 
             // Bottom: Strong lighting (Very opaque)
-            baseColor.withOpacity(0.9),
+            baseColor.withValues(alpha:0.9),
           ],
           // The "Strong Lighting" stops
           stops: const [0.3, 0.7, 1.0],

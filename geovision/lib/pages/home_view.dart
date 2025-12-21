@@ -34,7 +34,6 @@ class _HomeViewPageState extends State<HomeViewPage> {
   }
 
   Future<void> _initPage() async {
-    await MetadataService.syncProjectData(widget.title);
 
     // ✅ 2. LOAD COLORS FIRST
     await _loadClassColors();

@@ -1,5 +1,5 @@
-import 'dart:io';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
 
@@ -8,10 +8,10 @@ import 'dart_kde.dart'; // The heatmap math file we just updated
 import 'tile_math.dart'; // Your existing tile math helper
 
 class MapCompositor {
-  static const int TILE_SIZE = 256;
+  static const int tileSize = 256;
 
   // Safety Limit: Prevents "Out of Memory" crashes on large projects
-  static const int MAX_DIMENSION = 2500;
+  static const int maxDimension = 2500;
 
   /// Main function to download tiles and stitch the map
   static Future<img.Image?> generateFinalMap(List<Map<String, double>> points) async {
@@ -68,7 +68,6 @@ class MapCompositor {
     int height = 0;
     int startX = 0, endX = 0, startY = 0, endY = 0;
 
-    print("📏 Calculating optimal zoom...");
 
     while (true) {
       var tl = TileMath.getTileIndex(dataMaxLat, dataMinLng, zoom);
@@ -79,11 +78,11 @@ class MapCompositor {
       startY = tl.y;
       endY = br.y;
 
-      width = (endX - startX + 1) * TILE_SIZE;
-      height = (endY - startY + 1) * TILE_SIZE;
+      width = (endX - startX + 1) * tileSize;
+      height = (endY - startY + 1) * tileSize;
 
       // If dimensions are safe, stop.
-      if (width <= MAX_DIMENSION && height <= MAX_DIMENSION) {
+      if (width <= maxDimension && height <= maxDimension) {
         break;
       }
 
@@ -99,13 +98,9 @@ class MapCompositor {
     // Fill with WHITE. If tiles fail, you get a white map instead of black.
     img.fill(fullCanvas, color: img.ColorRgb8(255, 255, 255));
 
-    print("🌍 Downloading ${(endX - startX + 1) * (endY - startY + 1)} Tiles at Zoom $zoom...");
-
     // ---------------------------------------------------------
     // 4. DOWNLOAD TILES (The "Polite" Loop)
     // ---------------------------------------------------------
-    int success = 0;
-
     for (int x = startX; x <= endX; x++) {
       for (int y = startY; y <= endY; y++) {
 
@@ -123,26 +118,22 @@ class MapCompositor {
           if (response.statusCode == 200) {
             final tile = img.decodePng(response.bodyBytes);
             if (tile != null) {
-              int dstX = (x - startX) * TILE_SIZE;
-              int dstY = (y - startY) * TILE_SIZE;
+              int dstX = (x - startX) * tileSize;
+              int dstY = (y - startY) * tileSize;
               img.compositeImage(fullCanvas, tile, dstX: dstX, dstY: dstY);
-              success++;
             }
-          } else {
-            print("❌ Tile Blocked: ${response.statusCode}");
           }
         } catch (e) {
-          print("❌ Network Error: $e");
+          if (kDebugMode) {
+            print("❌ Network Error: $e");
+          }
         }
       }
     }
-    print("✅ Downloaded $success tiles.");
 
     // ---------------------------------------------------------
     // 5. GENERATE & MERGE HEATMAP
     // ---------------------------------------------------------
-    print("🔥 Overlaying Heatmap...");
-
     // Calculate Lat/Lng of the canvas edges
     double n = tile2lat(startY, zoom);
     double w = tile2lng(startX, zoom);

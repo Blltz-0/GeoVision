@@ -3,14 +3,15 @@ import 'package:flutter/material.dart';
 class EllipsisMenu extends StatelessWidget {
   final VoidCallback onInfo;
   final VoidCallback onDelete;
-  final VoidCallback onTag; // <--- 1. NEW CALLBACK
+  final VoidCallback onTag;
 
   const EllipsisMenu({
     super.key,
     required this.onInfo,
     required this.onDelete,
-    required this.onTag, // <--- Require it
+    required this.onTag,
   });
+
 
   @override
   Widget build(BuildContext context) {
@@ -20,9 +21,9 @@ class EllipsisMenu extends StatelessWidget {
         if (value == 'Delete') onDelete();
         if (value == 'Tag') onTag();
       },
+      //Options
       itemBuilder: (BuildContext context) {
         return [
-          // 1. TAG OPTION (Add this first or where you prefer)
           const PopupMenuItem(
             value: 'Tag',
             child: Row(
@@ -33,7 +34,7 @@ class EllipsisMenu extends StatelessWidget {
               ],
             ),
           ),
-          const PopupMenuDivider(), // Optional separator
+          const PopupMenuDivider(),
           const PopupMenuItem(
             value: 'Info',
             child: Row(

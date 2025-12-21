@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:geovision/components/project_card.dart';
-import 'package:geovision/components/project_grid.dart';
+import 'package:geovision/components/project_list.dart';
 
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
@@ -14,27 +14,22 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   List<FileSystemEntity> _folders = [];
+  String _searchQuery = "";
 
   @override
   void initState() {
     super.initState();
-    _loadFolders(); // 4. Load data when app starts
+    _loadFolders();
   }
 
-  // Replace your old _getAppPath with this one
   Future<String> _getAppPath() async {
     final appDocDir = await getApplicationDocumentsDirectory();
-
-    // 1. Define the specific subfolder path
     final projectDirPath = '${appDocDir.path}/projects';
     final projectDir = Directory(projectDirPath);
 
-    // 2. Check if 'projects' folder exists; if not, create it!
     if (!await projectDir.exists()) {
       await projectDir.create(recursive: true);
     }
-
-    // 3. Return THIS path instead of the root
     return projectDir.path;
   }
 
@@ -44,7 +39,6 @@ class _HomePageState extends State<HomePage> {
 
     if (await myDir.exists()) {
       setState(() {
-        // Get all folders and ignore files
         _folders = myDir.listSync().whereType<Directory>().toList();
       });
     }
@@ -52,25 +46,19 @@ class _HomePageState extends State<HomePage> {
 
   Future<bool> _createFolder(String folderName) async {
     final projectsPath = await _getAppPath();
-
     final newProjectDir = Directory('$projectsPath/$folderName');
     final imagesSubDir = Directory('$projectsPath/$folderName/images');
 
-    // CHECK IF EXISTS
     if (await newProjectDir.exists()) {
-      // Return FALSE so the UI knows it failed
       return false;
     } else {
-      // Create folders
       await newProjectDir.create();
       await imagesSubDir.create();
-
-      _loadFolders(); // Refresh list
-      return true; // Return TRUE for success
+      _loadFolders();
+      return true;
     }
   }
 
-  // --- UI: Show Dialog ---
   void _showCreateDialog() {
     final controller = TextEditingController();
     showDialog(
@@ -86,28 +74,21 @@ class _HomePageState extends State<HomePage> {
           ElevatedButton(
             onPressed: () async {
               if (controller.text.isNotEmpty) {
-
-                // 1. Call the function and wait for the result
                 bool success = await _createFolder(controller.text);
-
-                if (!context.mounted) return; // Safety check
+                if (!context.mounted) return;
 
                 if (success) {
-                  // SUCCESS: Close dialog
                   Navigator.pop(context);
-
-                  // Optional: Show success message
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text("Project created successfully!")),
                   );
                 } else {
-                  // FAILURE (Duplicate): Keep dialog open, show RED Error
                   Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: const Text("Error: That project name already exists!"),
+                    const SnackBar(
+                      content: Text("Error: That project name already exists!"),
                       backgroundColor: Colors.red,
-                      duration: const Duration(seconds: 2),
+                      duration: Duration(seconds: 2),
                     ),
                   );
                 }
@@ -122,106 +103,152 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
-    final List<Map<String, dynamic>> displayData = _folders.map((folder) {
+    final List<Map<String, dynamic>> allData = _folders.map((folder) {
       return {
-        "title": folder.path.split(Platform.pathSeparator).last, // Get name from path
-        // You can add "color": Colors.blue here if you want
+        "title": folder.path.split(Platform.pathSeparator).last,
       };
     }).toList();
 
-    return Scaffold(
-      appBar: AppBar(
-        backgroundColor: Colors.lightGreenAccent,
-        automaticallyImplyLeading: false,
-        centerTitle: true,
-        title: Image.asset(
-          'assets/logo.png',
-          height: 80, // Keep it constrained so it doesn't overflow
-          fit: BoxFit.contain, // Ensures it doesn't get cut off
+    final List<Map<String, dynamic>> filteredData = allData.where((item) {
+      final title = item['title'].toString().toLowerCase();
+      final query = _searchQuery.toLowerCase();
+      return title.contains(query);
+    }).toList();
+
+    // 1. WRAP SCAFFOLD IN GESTURE DETECTOR
+    // This detects taps anywhere on the background to close the keyboard
+    return GestureDetector(
+      onTap: () {
+        FocusManager.instance.primaryFocus?.unfocus();
+      },
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: Colors.lightGreenAccent,
+          automaticallyImplyLeading: false,
+          centerTitle: true,
+          title: Image.asset(
+            'assets/logo.png',
+            height: 80,
+            fit: BoxFit.contain,
+          ),
         ),
-      ),
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            //---------SECTION 1: RECENT ITEMS ------------
-            Container(
-              padding: const EdgeInsets.all(20),
-              color: Colors.white,
-              height: 150,
-              width: double.infinity,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  Text(
-                    'Recent Items',
-                    style: TextStyle(
-                      fontSize: 15,
-                    ),
-                  ),
-                  SizedBox(height:10),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        GestureDetector(
-                          onTap: _showCreateDialog,
-                          child: Container(
-                            height: 75,
-                            width: 75,
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              border: Border.all(
-                                color: Colors.blueAccent.withValues(alpha: 0.3), // fixed withValues syntax
-                                width: 1
+        body: SingleChildScrollView(
+          child: Column(
+            children: [
+              //---------SECTION 1: RECENT ITEMS ------------
+              Container(
+                  padding: const EdgeInsets.all(20),
+                  color: Colors.white,
+                  height: 180,
+                  width: double.infinity,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+                      const Text(
+                        'Recent Items',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height:10),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Row(
+                            children: [
+                              GestureDetector(
+                                onTap: _showCreateDialog,
+                                child: Container(
+                                  height: 90,
+                                  width: 90,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    border: Border.all(
+                                        color: Colors.lightGreenAccent.withValues(alpha: 0.3),
+                                        width: 1
+                                    ),
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(Icons.add, color: Colors.green.withValues(alpha: 0.8),),
+                                      const Text("New", style: TextStyle(color: Colors.green, fontSize: 10),)
+                                    ],
+                                  ),
+                                ),
                               ),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.add, color: Colors.blueAccent.withValues(alpha: 0.8),),
-                                Text("New Project", style: TextStyle(color: Colors.blueAccent, fontSize: 10),)
-                              ],
-                            ),
+                              const SizedBox(width: 5),
+                              ...List.generate(allData.length, (index) {
+                                final project = allData[index];
+                                return Row(
+                                  children: [
+                                    ProjectCard(
+                                      title: project["title"],
+                                      onReturn: () => _loadFolders(),
+                                    ),
+                                    const SizedBox(width: 5),
+                                  ],
+                                );
+                              }),
+                            ],
                           ),
                         ),
-                        SizedBox(width: 5),
-                        ...List.generate(displayData.length, (index) {
-
-                          final project = displayData[index];
-
-                          return Row(
-                            children: [
-                              ProjectCard(
-                                title: project["title"],
-                              ),
-                              SizedBox(width: 5),
-                            ]
-                          );
-                          },
-                        )
-                      ],
-                    ),
+                      )
+                    ],
                   )
-                ],
-              )
-            ),
-
-            Container(
-              padding: const EdgeInsets.all(20),
-              color: Colors.white,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  Text('All Projects'),
-                  SizedBox(height:10),
-                  SingleChildScrollView(
-                    child: ProjectGrid(columns: 3, itemCount: displayData.length, dataList: displayData,)
-                  )
-                ]
               ),
-            ),
-          ],
+
+              //---------SECTION 2: ALL PROJECTS ------------
+              Container(
+                padding: const EdgeInsets.all(20),
+                color: Colors.grey[100],
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: <Widget>[
+
+                      // --- SEARCH BAR ---
+                      TextField(
+                        autofocus: false, // 2. Explicitly disable autofocus
+                        onChanged: (val) {
+                          setState(() => _searchQuery = val);
+                        },
+                        decoration: InputDecoration(
+                          hintText: "Search projects...",
+                          prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                          filled: true,
+                          fillColor: Colors.white,
+                          contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 20),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(30),
+                            borderSide: BorderSide(color: Colors.grey.shade300),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(30),
+                            borderSide: const BorderSide(color: Colors.lightGreen),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      const Text(
+                        'All Projects',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height:10),
+
+                      SingleChildScrollView(
+                          child: ProjectList(
+                              dataList: filteredData,
+                              onRefresh: () =>  _loadFolders()
+                          )
+                      )
+                    ]
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

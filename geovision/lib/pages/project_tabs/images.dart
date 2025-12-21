@@ -1,24 +1,40 @@
-import 'dart:convert'; // ✅ NEEDED FOR JSON
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:geovision/components/class_selector_dropdown.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:native_exif/native_exif.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:geovision/components/class_selector.dart';
 
+// Your custom imports
+import 'package:geovision/components/class_selector_dropdown.dart';
 import '../../components/image_grid.dart';
 import '../../functions/metadata_handle.dart';
+import '../../functions/camera/image_processor.dart';
 
 class ImagesPage extends StatefulWidget {
   final String projectName;
 
+  // --- DATA FROM PARENT ---
+  final List<File> images;
+  final Map<String, String> labelMap;
+  final List<dynamic> projectClasses;
+  final bool isLoading;
+
+  // Callbacks
+  final VoidCallback? onDataChanged;
+  final VoidCallback? onClassesUpdated;
+
   const ImagesPage({
     super.key,
     required this.projectName,
+    required this.images,
+    required this.labelMap,
+    required this.projectClasses,
+    required this.isLoading,
+    this.onDataChanged,
+    this.onClassesUpdated,
   });
 
   @override
@@ -26,220 +42,340 @@ class ImagesPage extends StatefulWidget {
 }
 
 class _ImagesPageState extends State<ImagesPage> {
-  List<File> _imageFiles = [];
-  bool _isLoading = true;
   String _filterClass = "All";
-
-  // ✅ 1. STORE RAW CLASS DATA (For Colors)
-  List<dynamic> _projectClasses = [];
-
-  // ✅ 2. STORE FILE->LABEL MAP (To know which image is what)
-  Map<String, String> _cachedLabelMap = {};
-
-  @override
-  void initState() {
-    super.initState();
-    _initPage();
-  }
-
-  Future<void> _initPage() async {
-    await MetadataService.syncProjectData(widget.projectName);
-
-    // ✅ Load Colors and Images
-    await _loadClassColors();
-    await _loadImages();
-  }
-
-  // ✅ NEW: Read classes.json so we have the colors
-  Future<void> _loadClassColors() async {
-    try {
-      final appDir = await getApplicationDocumentsDirectory();
-      final classFile = File('${appDir.path}/projects/${widget.projectName}/classes.json');
-
-      if (await classFile.exists()) {
-        String jsonString = await classFile.readAsString();
-        setState(() {
-          _projectClasses = jsonDecode(jsonString); // Raw list of maps
-        });
-      }
-    } catch (e) {
-      if (kDebugMode) print("Error loading classes: $e");
-    }
-  }
-
-  Future<void> _loadImages() async {
-    setState(() => _isLoading = true);
-
-    final appDir = await getApplicationDocumentsDirectory();
-    final imagesDirPath = '${appDir.path}/projects/${widget.projectName}/images';
-    final imagesDir = Directory(imagesDirPath);
-
-    if (await imagesDir.exists()) {
-      // 1. LOAD CSV DATA
-      final csvData = await MetadataService.readCsvData(widget.projectName);
-
-      // 2. Build Lookup Map
-      Map<String, String> tempMap = {};
-      for (var row in csvData) {
-        String filename = row['path'].split(Platform.pathSeparator).last;
-        tempMap[filename] = row['class'] ?? "Unclassified";
-      }
-
-      // ✅ Save this map to state so build() can use it later
-      _cachedLabelMap = tempMap;
-
-      // 3. Get Physical Files
-      final allFiles = imagesDir.listSync();
-
-      List<File> validImages = allFiles
-          .map((item) => File(item.path))
-          .where((item) {
-        final ext = item.path.split('.').last.toLowerCase();
-        return ext == 'jpg' || ext == 'png' || ext == 'jpeg';
-      })
-          .toList();
-
-      // 4. APPLY FILTER
-      if (_filterClass != "All") {
-        validImages = validImages.where((file) {
-          String filename = file.path.split(Platform.pathSeparator).last;
-          // Use the map we just built
-          String fileClass = _cachedLabelMap[filename] ?? "Unclassified";
-          return fileClass == _filterClass;
-        }).toList();
-      }
-
-      // 5. SORT
-      validImages.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
-
-      setState(() {
-        _imageFiles = validImages;
-        _isLoading = false;
-      });
-    } else {
-      setState(() => _isLoading = false);
-    }
-  }
+  bool _isImporting = false;
+  bool _groupByClass = false; // <--- 1. NEW STATE VARIABLE
 
   Future<void> _importImage() async {
-    // ... (Your existing permission logic) ...
+    // 1. Permission Check
     if (Platform.isAndroid) {
       var status = await Permission.accessMediaLocation.status;
       if (!status.isGranted) status = await Permission.accessMediaLocation.request();
       if (await Permission.photos.request().isDenied) return;
     }
 
+    // 2. Pick Multiple Images
     final ImagePicker picker = ImagePicker();
-    final XFile? pickedFile = await picker.pickImage(source: ImageSource.gallery);
+    // CHANGED: Use pickMultiImage() to get a List<XFile>
+    final List<XFile> pickedFiles = await picker.pickMultiImage();
 
-    if (pickedFile == null) return;
+    if (pickedFiles.isEmpty) return;
 
-    setState(() => _isLoading = true);
+    setState(() => _isImporting = true);
+
+    // 3. Determine Class (Applies to the whole batch)
+    String targetClass = "Unclassified";
+    if (_filterClass != "All") {
+      targetClass = _filterClass;
+    }
+
+    int successCount = 0;
 
     try {
-      // ... (Your existing EXIF logic) ...
-      final exif = await Exif.fromPath(pickedFile.path);
+      // 4. Loop through every selected file
+      for (final file in pickedFiles) {
+        try {
+          // We moved the complex logic into a helper function to keep this clean
+          await _processSingleImport(file, targetClass);
+          successCount++;
+        } catch (e) {
+          debugPrint("Failed to import ${file.name}: $e");
+        }
+      }
+
+      // 5. UI Feedback
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Successfully imported $successCount images")),
+        );
+        widget.onDataChanged?.call();
+      }
+
+    } catch (e) {
+      debugPrint("Batch Import Error: $e");
+    } finally {
+      if (mounted) {
+        setState(() => _isImporting = false);
+      }
+    }
+  }
+
+  // Helper to process a single file from the batch
+  Future<void> _processSingleImport(XFile file, String targetClass) async {
+    // A. Capture Original GPS (Before processing wipes it)
+    Position? importedPosition;
+    try {
+      final exif = await Exif.fromPath(file.path);
       final latLong = await exif.getLatLong();
       await exif.close();
 
-      Position? position;
       if (latLong != null) {
-        position = Position(
+        importedPosition = Position(
           latitude: latLong.latitude,
           longitude: latLong.longitude,
           timestamp: DateTime.now(),
           accuracy: 0, altitude: 0, heading: 0, speed: 0, speedAccuracy: 0, altitudeAccuracy: 0, headingAccuracy: 0,
         );
       }
-
-      final appDir = await getApplicationDocumentsDirectory();
-      final String fileId = 'img_import_${DateTime.now().millisecondsSinceEpoch}';
-      final String newPath = '${appDir.path}/projects/${widget.projectName}/images/$fileId.jpg';
-
-      await File(pickedFile.path).copy(newPath);
-
-      await MetadataService.saveToCsv(
-        projectName: widget.projectName,
-        imagePath: newPath,
-        position: position,
-      );
-
-      // Reload to update grid
-      _loadImages();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("Image imported successfully!")),
-        );
-      }
-
     } catch (e) {
-      if (kDebugMode) print("Import Error: $e");
-    } finally {
-      setState(() => _isLoading = false);
+      debugPrint("Could not read EXIF for ${file.name}: $e");
     }
+
+    // B. Resize & Crop (using your image_processor.dart)
+    await compute(cropSquareImage, file.path);
+
+    // C. Generate Filename
+    final appDir = await getApplicationDocumentsDirectory();
+    final projectDir = Directory('${appDir.path}/projects/${widget.projectName}/images');
+
+    if (!await projectDir.exists()) {
+      await projectDir.create(recursive: true);
+    }
+
+    final String fileName = await MetadataService.generateNextFileName(
+        projectDir,
+        widget.projectName,
+        targetClass
+    );
+    final String newPath = '${projectDir.path}/$fileName';
+
+    // D. Copy File
+    await File(file.path).copy(newPath);
+
+    // E. Save Metadata & CSV
+    await MetadataService.embedMetadata(
+      filePath: newPath,
+      lat: importedPosition?.latitude ?? 0.0,
+      lng: importedPosition?.longitude ?? 0.0,
+      className: targetClass,
+    );
+
+    await MetadataService.saveToCsv(
+      projectName: widget.projectName,
+      imagePath: newPath,
+      position: importedPosition,
+      className: targetClass,
+    );
+  }
+
+  // --- 2. HELPER: Build Grouped Sections ---
+  Widget _buildGroupedView(List<File> imagesToDisplay) {
+    // Get unique classes from the current list
+    final Set<String> uniqueClasses = imagesToDisplay.map((file) {
+      final filename = file.path.split(Platform.pathSeparator).last;
+      return widget.labelMap[filename] ?? "Unclassified";
+    }).toSet();
+
+    // Sort classes alphabetically
+    final sortedClasses = uniqueClasses.toList()..sort();
+
+    return Column(
+      children: sortedClasses.map((className) {
+        // Filter images for this specific class
+        final classImages = imagesToDisplay.where((file) {
+          final filename = file.path.split(Platform.pathSeparator).last;
+          final label = widget.labelMap[filename] ?? "Unclassified";
+          return label == className;
+        }).toList();
+
+        // Get class color
+        final classDef = widget.projectClasses.firstWhere(
+                (c) => c['name'] == className,
+            orElse: () => {'color': Colors.grey.toARGB32()}
+        );
+        Color headerColor = Color(classDef['color']);
+
+        // Prepare grid data
+        final gridData = classImages.map((file) {
+          final filename = file.path.split(Platform.pathSeparator).last;
+          return {
+            "path": file.path,
+            "label": widget.labelMap[filename],
+          };
+        }).toList();
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Section Header
+            Container(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              margin: const EdgeInsets.only(top: 15, bottom: 5),
+              decoration: BoxDecoration(
+                  border: Border(bottom: BorderSide(color: headerColor, width: 2))
+              ),
+              child: Row(
+                children: [
+                  CircleAvatar(radius: 6, backgroundColor: headerColor),
+                  const SizedBox(width: 8),
+                  Text(
+                    "$className (${classImages.length})",
+                    style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black87
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // The Grid for this section
+            ImageGrid(
+              columns: 3,
+              itemCount: gridData.length,
+              dataList: gridData,
+              projectName: widget.projectName,
+              onBack: () => widget.onDataChanged?.call(),
+              projectClasses: widget.projectClasses,
+              // IMPORTANT: disable scrolling inside the grid so the outer ScrollView handles it
+              physics: const NeverScrollableScrollPhysics(),
+              shrinkWrap: true,
+            ),
+          ],
+        );
+      }).toList(),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    // ✅ 3. PREPARE GRID DATA WITH LABELS
-    // We map the physical file list to a Map containing path AND label
-    final List<Map<String, dynamic>> gridData = _imageFiles.map((file) {
-      String filename = file.path.split(Platform.pathSeparator).last;
+    if (widget.isLoading || _isImporting) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    // Filter based on Dropdown Selection first
+    List<File> filteredImages = widget.images;
+    if (_filterClass != "All") {
+      filteredImages = widget.images.where((file) {
+        final filename = file.path.split(Platform.pathSeparator).last;
+        final fileClass = widget.labelMap[filename] ?? "Unclassified";
+        return fileClass == _filterClass;
+      }).toList();
+    }
+
+    // Data for Flat View
+    final List<Map<String, dynamic>> flatGridData = filteredImages.map((file) {
+      final filename = file.path.split(Platform.pathSeparator).last;
       return {
         "path": file.path,
-        "label": _cachedLabelMap[filename], // Pass the class string here!
+        "label": widget.labelMap[filename],
       };
     }).toList();
 
     return Scaffold(
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
+      body: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
+        ),
         child: Container(
+          constraints: BoxConstraints(
+            minHeight: MediaQuery.of(context).size.height,
+          ),
           padding: const EdgeInsets.all(10),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const SizedBox(height: 20),
-              Text(
-                '${widget.projectName} Gallery',
-                style: const TextStyle(fontSize: 20),
-                textAlign: TextAlign.center,
+              // Dropdown
+
+              // --- SWITCH UI ---
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween, // Places items at edges
+                  children: [
+                    // LEFT: Image Count
+                    Text(
+                      "${filteredImages.length} Images",
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey[600],
+                      ),
+                    ),
+
+                    // RIGHT: Group Switch
+                    Row(
+                      children: [
+                        Text(
+                            "Group by Class",
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.grey[600])
+                        ),
+                        const SizedBox(width: 8),
+                        Transform.scale(
+                          scale: 0.8,
+                          child: Switch(
+                            value: _groupByClass,
+                            activeThumbColor: Colors.lightGreen,
+                            onChanged: (val) {
+                              setState(() => _groupByClass = val);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  duration: Duration(milliseconds: 700),
+                                  content: Text(_groupByClass ? "Grouped by Class" : "Ungrouped"),
+                                  behavior: SnackBarBehavior.floating, // This makes it float
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+
+                    ),
+                  ],
+                ),
               ),
               ClassSelectorDropdown(
                 projectName: widget.projectName,
                 selectedClass: _filterClass,
+                classes: widget.projectClasses,
+                onClassAdded: widget.onClassesUpdated,
                 onClassSelected: (String newClass) {
-                  setState(() {
-                    _filterClass = newClass;
-                  });
-                  _loadImages();
+                  setState(() => _filterClass = newClass);
                 },
               ),
-              const SizedBox(height: 20),
-              _imageFiles.isEmpty
-                  ? const Center(child: Text("No images yet"))
-                  : ImageGrid(
-                columns: 3,
-                itemCount: gridData.length,
-                dataList: gridData,
-                projectName: widget.projectName,
-                onBack: () {
-                  _loadImages();
-                  _loadClassColors(); // Refresh colors too if they changed
-                },
-                // ✅ 4. PASS THE RAW CLASS LIST
-                projectClasses: _projectClasses,
-              ),
+
+              const SizedBox(height: 10),
+
+              // Empty State
+              if (filteredImages.isEmpty)
+                const Center(child: Padding(
+                  padding: EdgeInsets.only(top: 50.0),
+                  child: Text("No images found"),
+                ))
+
+              // --- 4. CONDITIONAL VIEW ---
+              else if (_groupByClass)
+                _buildGroupedView(filteredImages)
+              else
+                ImageGrid(
+                  columns: 3,
+                  itemCount: flatGridData.length,
+                  dataList: flatGridData,
+                  projectName: widget.projectName,
+                  onBack: () => widget.onDataChanged?.call(),
+                  projectClasses: widget.projectClasses,
+                  physics: const NeverScrollableScrollPhysics(),
+                  shrinkWrap: true,
+                ),
+
+              // Extra padding for FAB
+              const SizedBox(height: 80),
             ],
           ),
         ),
       ),
-      floatingActionButton: FloatingActionButton(
+
+      floatingActionButton: FloatingActionButton.extended(
+        heroTag: 'fab_images',
+        shape: const StadiumBorder(),
+        backgroundColor: Colors.white,
+        label: const Text("Upload Image", style: TextStyle(color: Colors.black87)),
+        icon: const Icon(Icons.add_a_photo_outlined),
         onPressed: _importImage,
         tooltip: 'Import Image',
-        child: const Icon(Icons.add),
       ),
     );
   }

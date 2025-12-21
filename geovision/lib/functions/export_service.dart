@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:archive/archive_io.dart';
+import 'package:flutter/foundation.dart';
 import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
@@ -10,8 +11,6 @@ import 'location_clusterer.dart'; // Import the file you just made
 
 class ExportService {
   static Future<void> exportProject(String projectName) async {
-    print("🚀 STARTING SMART EXPORT for $projectName");
-
     try {
       final appDir = await getApplicationDocumentsDirectory();
       final sourceDir = Directory('${appDir.path}/projects/$projectName');
@@ -33,9 +32,7 @@ class ExportService {
       // 2. CLUSTER POINTS (The Magic Fix)
       // Group points if they are within 500km of each other.
       // If > 500km, they get a separate map.
-      print("🧩 Clustering points...");
       var clusters = LocationClusterer.clusterPoints(points, 500.0);
-      print("   > Found ${clusters.length} distinct regions (e.g. countries).");
 
       // 3. GENERATE MAPS FOR EACH CLUSTER
       // We store generated map files in a list to add to zip later
@@ -45,8 +42,6 @@ class ExportService {
         var clusterPoints = clusters[i];
         String regionName = "region_${i + 1}"; // e.g., map_region_1.png
 
-        print("🎨 Generating Map for Region ${i+1} (${clusterPoints.length} points)...");
-
         final img.Image? mapImg = await MapCompositor.generateFinalMap(clusterPoints);
 
         if (mapImg != null) {
@@ -54,12 +49,10 @@ class ExportService {
           final mapFile = File(mapPath);
           await mapFile.writeAsBytes(img.encodePng(mapImg));
           generatedMaps.add(mapFile);
-          print("   ✅ Saved $regionName");
         }
       }
 
       // 4. CREATE ZIP
-      print("📦 Zipping...");
       final zipFile = File(zipPath);
       if (zipFile.existsSync()) zipFile.deleteSync();
 
@@ -82,8 +75,11 @@ class ExportService {
       await Share.shareXFiles([XFile(zipPath)], text: 'Export: $projectName');
 
     } catch (e, stack) {
-      print("❌ ERROR: $e");
-      print(stack);
+      if (kDebugMode) {
+        print("❌ ERROR: $e");
+        print(stack);
+      }
+
     }
   }
 }

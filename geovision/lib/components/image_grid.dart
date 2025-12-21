@@ -1,16 +1,19 @@
+
+import 'dart:io';
 import 'package:flutter/material.dart';
-import '../pages/image_view.dart';
-import 'image_card.dart';
+import '../pages/image_view.dart'; // Ensure this points to your ImageView file
 
 class ImageGrid extends StatelessWidget {
   final int columns;
   final int itemCount;
   final List<Map<String, dynamic>> dataList;
   final String projectName;
-  final VoidCallback onBack;
-
-  // ✅ DEFINITION ADDED HERE
+  final VoidCallback? onBack;
   final List<dynamic> projectClasses;
+
+  // --- NEW PARAMETERS ---
+  final ScrollPhysics? physics;
+  final bool shrinkWrap;
 
   const ImageGrid({
     super.key,
@@ -18,70 +21,111 @@ class ImageGrid extends StatelessWidget {
     required this.itemCount,
     required this.dataList,
     required this.projectName,
-    required this.onBack,
-    // ✅ CONSTRUCTOR UPDATED HERE
     required this.projectClasses,
+    this.onBack,
+    // Add them to constructor with defaults
+    this.physics,
+    this.shrinkWrap = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    // Helper to get color from class list
+    Color getClassColor(String className) {
+      final cls = projectClasses.firstWhere(
+            (c) => c['name'] == className,
+        orElse: () => {'color': Colors.grey.toARGB32()},
+      );
+      return Color(cls['color']);
+    }
+
     return GridView.builder(
-      shrinkWrap: true,
+      // --- USE THEM HERE ---
+      physics: physics,
+      shrinkWrap: shrinkWrap,
+
+      padding: const EdgeInsets.only(bottom: 20),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
         crossAxisCount: columns,
-        mainAxisSpacing: 10,
-        crossAxisSpacing: 10,
+        mainAxisSpacing: 8,
+        crossAxisSpacing: 8,
       ),
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: dataList.length,
-      itemBuilder: (context, index) {
+      itemCount: itemCount,
+      itemBuilder: (BuildContext context, int index) {
         final item = dataList[index];
-        final String imagePath = item['path'];
-
-        // 1. Get the class string (e.g. "Cat")
-        final String? csvClass = item['label'];
-
-        // 2. Find the Color manually from the raw list
-        Color? resolvedColor;
-
-        if (csvClass != null && csvClass.isNotEmpty) {
-          try {
-            // Robust match: trim spaces and ignore casing
-            final matchingClass = projectClasses.firstWhere(
-                    (cls) => cls['name'].toString().trim().toLowerCase() == csvClass.trim().toLowerCase()
-            );
-
-            // Convert int color to Color object
-            resolvedColor = Color(matchingClass['color']);
-
-          } catch (e) {
-            resolvedColor = null; // Class not found -> Black shadow
-          }
-        }
+        final imagePath = item['path'];
+        final label = item['label'] ?? "Unclassified";
+        final color = getClassColor(label);
 
         return GestureDetector(
-            onTap: () {
-              List<String> allPaths = dataList.map((item) => item['path'] as String).toList();
-              Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                      builder: (context) => ImageView(
-                        allImagePaths: allPaths,
-                        initialIndex: index,
-                        projectName: projectName,
-                      )
-                  )
-              ).then((_) {
-                onBack();
-              });
-            },
-            child: ImageCard(
-              imagePath: imagePath,
-              className: csvClass,
-              classColor: resolvedColor,
-            )
+          onTap: () async {
+            // Collect all paths for swipe navigation
+            final allPaths = dataList.map((e) => e['path'] as String).toList();
+
+            // 1. Wait for ImageView to close and capture the result
+            final bool? result = await Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => ImageView(
+                  allImagePaths: allPaths,
+                  initialIndex: index,
+                  projectName: projectName,
+                ),
+              ),
+            );
+
+            // 2. If result is true, it means an image was renamed or deleted
+            if (result == true) {
+              onBack?.call(); // Refresh the grid
+            }
+          },
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(8),
+              color: Colors.grey[200],
+            ),
+            clipBehavior: Clip.hardEdge,
+            child: Stack(
+              fit: StackFit.expand,
+              children: [
+                // 1. The Image
+                Hero(
+                  tag: imagePath,
+                  child: Image.file(
+                    File(imagePath), // Requires import 'dart:io' as java.io alias or plain File
+                    fit: BoxFit.cover,
+                    errorBuilder: (ctx, err, stack) => const Center(
+                        child: Icon(Icons.broken_image, color: Colors.grey)),
+                  ),
+                ),
+
+                // 2. The Tag Overlay
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    color: color.withValues(alpha:0.8),
+                    padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 6),
+                    child: Text(
+                      label,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
         );
       },
     );
   }
 }
+

@@ -30,8 +30,6 @@ class DartKDE {
     // 0.0001 is approx 10m, 0.5 is approx 50km
     bandwidth = bandwidth.clamp(0.0001, 0.5);
 
-    print("   > Heatmap Logic: Dynamic Bandwidth set to $bandwidth for span $latSpan");
-
     // 2. Setup Grid
     List<List<double>> densityGrid = List.generate(height, (_) => List.filled(width, 0.0));
     double maxDensity = 0.0;
