@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import '../components/class_creator.dart';
 import '../functions/metadata_handle.dart';
 import '../components/ellipsis_menu.dart';
+import 'annotation_page.dart';
 
 class ImageView extends StatefulWidget {
   final List<String> allImagePaths;
@@ -192,13 +193,16 @@ class _ImageViewState extends State<ImageView> {
   }
 
   void _showTaggingSheet() async {
-    // USE LOCAL PATH
+    // 1. Capture the path before any async gaps to be safe
     final currentPath = _currentImagePaths[_currentIndex];
+
+    // 2. Fetch data (Async)
     final classes = await MetadataService.getClasses(widget.projectName);
 
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
-
+    // 3. Check mounted BEFORE showing the sheet
     if (!mounted) return;
+
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
 
     await showModalBottomSheet(
       context: context,
@@ -237,32 +241,34 @@ class _ImageViewState extends State<ImageView> {
                   ),
                   title: Text(cls['name'], style: const TextStyle(fontWeight: FontWeight.bold)),
                   onTap: () async {
-                  String? newPath = await MetadataService.tagImage(
-                  widget.projectName,
-                  currentPath,
-                  cls['name'],
-                  );
+                    // --- ASYNC OPERATION ---
+                    String? newPath = await MetadataService.tagImage(
+                      widget.projectName,
+                      currentPath,
+                      cls['name'],
+                    );
 
-                  if (!mounted) return;
+                    // --- FIX: CHECK MOUNTED AFTER AWAIT ---
+                    if (!mounted) return;
 
-                  Navigator.pop(context); // Close sheet
+                    Navigator.pop(context); // Close sheet safely
 
-                  if (newPath != null) {
-                  // --- FIX: CLEAR CACHE FOR BOTH PATHS ---
-                  // Clear the old path from cache so it doesn't show up later if reused
-                  await FileImage(File(currentPath)).evict();
-                  // Clear the new path just in case
-                  await FileImage(File(newPath)).evict();
+                    if (newPath != null) {
+                      // Clear cache logic...
+                      await FileImage(File(currentPath)).evict();
+                      await FileImage(File(newPath)).evict();
 
-                  setState(() {
-                  _currentImagePaths[_currentIndex] = newPath;
-                  _hasChanges = true;
-                  _loadMetadata();
-                  });
+                      if (!mounted) return; // Check again before setState
 
-                  ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text("Renamed & Tagged as '${cls['name']}'")),
-                  );
+                      setState(() {
+                        _currentImagePaths[_currentIndex] = newPath;
+                        _hasChanges = true;
+                        _loadMetadata();
+                      });
+
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text("Renamed & Tagged as '${cls['name']}'")),
+                      );
                     } else {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(content: Text("Error renaming file.")),
@@ -281,21 +287,29 @@ class _ImageViewState extends State<ImageView> {
               icon: const Icon(Icons.add),
               label: const Text("Create New Class"),
               onPressed: () async {
-                Navigator.pop(context); // Close sheet
+                // Close the current sheet first
+                Navigator.pop(context);
+
+                // Navigate to create page (ASYNC)
                 await Navigator.push(
                   context,
                   MaterialPageRoute(
                     builder: (context) => CreateClassPage(projectName: widget.projectName),
                   ),
                 );
-                // Re-open sheet to show new class
-                if (mounted) _showTaggingSheet();
+
+                // --- FIX: CHECK MOUNTED BEFORE RE-OPENING SHEET ---
+                if (!mounted) return;
+
+                // Now safe to call a method that uses 'context'
+                _showTaggingSheet();
               },
             )
           ],
         ),
       ),
     ).whenComplete(() {
+      // safe to call this without context
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     });
   }
@@ -447,6 +461,25 @@ class _ImageViewState extends State<ImageView> {
               ],
             );
           },
+        ),
+        floatingActionButton: FloatingActionButton.extended(
+          heroTag: 'fab_annotate',
+          shape: const StadiumBorder(),
+          backgroundColor: Colors.white,
+          label: const Text("Annotate", style: TextStyle(color: Colors.black87)),
+          icon: const Icon(Icons.brush_rounded),
+          onPressed: () {
+            // Get the current path from your local state
+            final String currentPath = _currentImagePaths[_currentIndex];
+
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => AnnotationPage(imagePath: currentPath),
+              ),
+            );
+          },
+          tooltip: 'Import Image',
         ),
       ),
     );

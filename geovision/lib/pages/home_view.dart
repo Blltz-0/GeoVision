@@ -138,16 +138,14 @@ class _HomeViewPageState extends State<HomeViewPage> {
 
               _imageFiles.isEmpty
                   ? const Center(child: Text("No images found."))
-                  : ImageGrid(
+                  : SliverImageGrid(
                 columns: 3,
-                itemCount: gridData.length,
                 dataList: gridData,
-                projectName: widget.title, // ✅ Fix: Use widget.title
+                projectName: widget.title,
                 onBack: () {
                   _loadImages();
                   _loadClassColors();
                 },
-                // ✅ 6. PASS THE CLASS COLORS
                 projectClasses: _projectClasses,
               ),
             ],

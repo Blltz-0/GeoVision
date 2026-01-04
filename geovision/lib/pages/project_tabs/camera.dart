@@ -12,20 +12,20 @@ import '../../functions/camera/image_processor.dart';
 
 class CameraPage extends StatefulWidget {
   final String projectName;
-
-  // --- NEW PARAMS ---
-  final List<dynamic> projectClasses;      // Receive data
-  final VoidCallback? onClassesUpdated;    // Receive refresh trigger
-
-  // Callback to notify parent (ProjectContainer) when photo is saved
+  final List<dynamic> projectClasses;
+  final VoidCallback? onClassesUpdated;
   final VoidCallback? onPhotoTaken;
+
+  // --- NEW: Controls if camera should be running ---
+  final bool isActive;
 
   const CameraPage({
     super.key,
     required this.projectName,
-    required this.projectClasses,   // Add this
-    this.onClassesUpdated,          // Add this
+    required this.projectClasses,
+    this.onClassesUpdated,
     this.onPhotoTaken,
+    this.isActive = true, // Default to true
   });
 
   @override
@@ -36,21 +36,39 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   CameraController? _controller;
   Future<void>? _initializeControllerFuture;
   bool _isCapturing = false;
-
-  // This tracks the tag applied to the NEXT photo taken
   String _activeTag = "Unclassified";
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _setupCamera();
+    // Only setup if we start active
+    if (widget.isActive) {
+      _setupCamera();
+    }
+  }
+
+  // --- NEW: Detect Tab Switching ---
+  @override
+  void didUpdateWidget(CameraPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // If the active state changed (User switched tabs)
+    if (widget.isActive != oldWidget.isActive) {
+      if (widget.isActive) {
+        _setupCamera(); // Tab selected -> Start Camera
+      } else {
+        _stopCamera();  // Tab deselected -> Stop Camera
+      }
+    }
   }
 
   Future<void> _setupCamera() async {
     try {
       final cameras = await availableCameras();
       if (cameras.isEmpty) return;
+
+      // Dispose existing if any to prevent memory leaks before new init
+      await _controller?.dispose();
 
       _controller = CameraController(
         cameras.first,
@@ -59,15 +77,25 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       );
 
       _initializeControllerFuture = _controller!.initialize();
+
+      // Rebuild to show preview
       if (mounted) setState(() {});
     } catch (e) {
       debugPrint("Camera Error: $e");
     }
   }
 
+  // --- NEW: Helper to stop camera ---
+  Future<void> _stopCamera() async {
+    await _controller?.dispose();
+    _controller = null;
+    if (mounted) setState(() {});
+  }
+
   Future<void> _takePicture() async {
     final controller = _controller;
-    if (controller == null || !controller.value.isInitialized || _isCapturing) {
+    // Check isActive to ensure we don't snap if user just switched tabs
+    if (!widget.isActive || controller == null || !controller.value.isInitialized || _isCapturing) {
       return;
     }
 
@@ -81,18 +109,13 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       if (mounted) setState(() => _isCapturing = false);
 
       _backgroundPipeline(rawImage, tagForThisPhoto, positionFuture);
-
     } catch (e) {
       debugPrint("Capture Error: $e");
       if (mounted) setState(() => _isCapturing = false);
     }
   }
 
-  Future<void> _backgroundPipeline(
-      XFile rawImage,
-      String className,
-      Future<Position?> locationFuture
-      ) async {
+  Future<void> _backgroundPipeline(XFile rawImage, String className, Future<Position?> locationFuture) async {
     try {
       await compute(cropSquareImage, rawImage.path);
 
@@ -100,11 +123,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       final imagesDir = Directory('${appDir.path}/projects/${widget.projectName}/images');
       if (!await imagesDir.exists()) await imagesDir.create(recursive: true);
 
-      final String fileName = await MetadataService.generateNextFileName(
-          imagesDir,
-          widget.projectName,
-          className
-      );
+      final String fileName = await MetadataService.generateNextFileName(imagesDir, widget.projectName, className);
       final String finalPath = '${imagesDir.path}/$fileName';
 
       final File tempFile = File(rawImage.path);
@@ -137,7 +156,6 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
         );
         widget.onPhotoTaken?.call();
       }
-
     } catch (e) {
       debugPrint("Background Pipeline Error: $e");
     }
@@ -169,11 +187,14 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (_controller == null || !_controller!.value.isInitialized) return;
     if (state == AppLifecycleState.inactive) {
+      // App went to background -> Stop camera
       _controller?.dispose();
     } else if (state == AppLifecycleState.resumed) {
-      _setupCamera();
+      // App came back -> Start camera ONLY if we are the active tab
+      if (widget.isActive) {
+        _setupCamera();
+      }
     }
   }
 
@@ -188,7 +209,8 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
           body: FutureBuilder<void>(
             future: _initializeControllerFuture,
             builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.done) {
+              // Only show preview if connection done AND controller is active
+              if (snapshot.connectionState == ConnectionState.done && _controller != null) {
                 var cameraRatio = _controller!.value.aspectRatio;
                 if (cameraRatio > 1) cameraRatio = 1 / cameraRatio;
 
@@ -216,26 +238,27 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                   ],
                 );
               } else {
-                return const Center(child: CircularProgressIndicator());
+                // Show black screen or loader when camera is off
+                return Container(
+                    color: Colors.black,
+                    child: Center(
+                      child: widget.isActive
+                          ? const CircularProgressIndicator() // Loading if active
+                          : const Icon(Icons.camera_alt, color: Colors.grey), // Icon if inactive
+                    )
+                );
               }
             },
           ),
         ),
-
-        // --- CLASS SELECTOR DROPDOWN ---
         Positioned(
           top: 40, left: 0, right: 0,
           child: ClassSelectorDropdown(
             projectName: widget.projectName,
-            selectedClass: _activeTag, // Use _activeTag here
-            showAllOption: false, // Usually camera doesn't need "All", just specific tags
-
-            // 1. Pass Data
+            selectedClass: _activeTag,
+            showAllOption: false,
             classes: widget.projectClasses,
-
-            // 2. Pass Refresh Callback
             onClassAdded: widget.onClassesUpdated,
-
             onClassSelected: (String newClass) {
               setState(() => _activeTag = newClass);
             },

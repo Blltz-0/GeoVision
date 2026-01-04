@@ -3,12 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:geovision/pages/manage_classes_page.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:native_exif/native_exif.dart';
-
-// Your existing imports
 import 'package:geovision/pages/project_tabs/camera.dart';
 import 'package:geovision/pages/project_tabs/images.dart';
 import 'package:geovision/pages/project_tabs/map.dart';
-import '../components/class_creator.dart';
 import '../functions/export_service.dart';
 import '../functions/metadata_handle.dart';
 
@@ -33,8 +30,13 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
   bool _isLoadingImages = true;
 
   // --- UI STATE ---
-  int _currentIndex = 1;
+  int _currentIndex = 1; // Default is Gallery (index 1)
   bool _isExporting = false;
+
+  // --- LAZY LOADING STATE ---
+  // Initialize with [false, true, false] because _currentIndex is 1 (Gallery).
+  // This means Camera (0) and Map (2) won't load until clicked.
+  final List<bool> _visitedIndices = [false, true, false];
 
   @override
   void initState() {
@@ -43,6 +45,16 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
     _synchronizeData();
   }
 
+  // --- NEW: Handle Tab Taps for Lazy Loading ---
+  void _onTabTapped(int index) {
+    setState(() {
+      _currentIndex = index;
+      // Mark this tab as visited so it builds and stays in memory
+      _visitedIndices[index] = true;
+    });
+  }
+
+  // --- DATA SYNCHRONIZATION ---
   Future<void> _synchronizeData() async {
     if (!mounted) return;
 
@@ -170,9 +182,9 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
     setState(() => _isExporting = true);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        duration: Duration(milliseconds: 1000),
-        content: Text("Exporting the Project..."),
-        behavior: SnackBarBehavior.floating, // This makes it float
+        duration: const Duration(milliseconds: 1000),
+        content: const Text("Exporting the Project..."),
+        behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(10),
         ),
@@ -185,17 +197,18 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
     }
   }
 
-  void _showAddClassDialog() async {
-    // Direct navigation to CreateClassPage for the "More" menu
-    final String? newClassName = await Navigator.push(
+  void _openManageClasses() async {
+    await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => CreateClassPage(projectName: widget.projectName),
+        builder: (context) => ManageClassesPage(projectName: widget.projectName),
       ),
     );
 
-    if (newClassName != null && mounted) {
-      _loadClasses(); // Refresh
+    if (mounted) {
+      await _loadClasses();
+      await _synchronizeData();
+      setState(() {});
     }
   }
 
@@ -347,64 +360,16 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
     );
   }
 
-  void _openManageClasses() async {
-    await Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => ManageClassesPage(projectName: widget.projectName),
-      ),
-    );
-
-    // When we return, reload everything in case user deleted/edited classes
-    if (mounted) {
-      await _loadClasses();      // Refresh class list
-      await _synchronizeData();  // Refresh images (in case of reclassification)
-      setState(() {});           // Force UI rebuild
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final List<Widget> pages = [
-      CameraPage(
-        projectName: widget.projectName,
-        projectClasses: _projectClasses,
-        onClassesUpdated: () async {
-          await _loadClasses();
-          setState(() {});
-        },
-        onPhotoTaken: _synchronizeData,
-      ),
-      ImagesPage(
-        projectName: widget.projectName,
-        images: _projectImages,
-        labelMap: _labelMap,
-        projectClasses: _projectClasses,
-        isLoading: _isLoadingImages,
-        onDataChanged: _synchronizeData,
-        onClassesUpdated: () async {
-          await _loadClasses();
-          setState(() {});
-        },
-      ),
-      MapPage(
-        projectName: widget.projectName,
-        mapData: _csvData,
-        projectClasses: _projectClasses,
-        onClassesUpdated: () async {
-          await _loadClasses();
-          setState(() {});
-        },
-      ),
-    ];
+    // We use Lazy Loading here.
+    // Instead of initializing all pages at once, we check `_visitedIndices`.
+    // If a tab hasn't been visited, we return an empty SizedBox().
 
-    // --- NEW: Wrap Scaffold in PopScope ---
     return PopScope(
-      canPop: false, // 1. Disable automatic back navigation
+      canPop: false,
       onPopInvokedWithResult: (bool didPop, dynamic result) async {
-        if (didPop) return; // If system already handled it, do nothing
-
-        // 2. Show Confirmation Dialog
+        if (didPop) return;
         final bool shouldLeave = await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
@@ -412,7 +377,7 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
             content: const Text("Are you sure you want to return to the home screen?"),
             actions: [
               TextButton(
-                onPressed: () => Navigator.pop(context, false), // Stay
+                onPressed: () => Navigator.pop(context, false),
                 child: const Text("Cancel"),
               ),
               ElevatedButton(
@@ -420,14 +385,13 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
                   backgroundColor: Colors.red,
                   foregroundColor: Colors.white,
                 ),
-                onPressed: () => Navigator.pop(context, true), // Leave
+                onPressed: () => Navigator.pop(context, true),
                 child: const Text("Exit"),
               ),
             ],
           ),
         ) ?? false;
 
-        // 3. Manually pop if user confirmed
         if (shouldLeave && context.mounted) {
           Navigator.of(context).pop();
         }
@@ -435,36 +399,11 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
       child: Scaffold(
         appBar: AppBar(
           backgroundColor: Colors.lightGreenAccent,
-          automaticallyImplyLeading: false, // We handle back manually now
+          automaticallyImplyLeading: false,
           centerTitle: true,
-          // Add a manual Back Button to the AppBar that triggers the same logic
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: () async {
-              // Trigger the same dialog logic manually
-              final bool shouldLeave = await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text("Exit Project?"),
-                  content: const Text("Are you sure you want to return to the home screen?"),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text("Cancel"),
-                    ),
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text("Exit"),
-                    ),
-                  ],
-                ),
-              ) ?? false;
-
-              if (shouldLeave && context.mounted) {
-                Navigator.of(context).pop();
-              }
-            },
+            onPressed: () => Navigator.maybePop(context),
           ),
           title: Text(widget.projectName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           actions: [
@@ -491,12 +430,59 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
         ),
         body: IndexedStack(
           index: _currentIndex,
-          children: pages,
+          children: [
+            // Tab 0: Camera (Lazy Loaded)
+            _visitedIndices[0]
+                ? CameraPage(
+              projectName: widget.projectName,
+              projectClasses: _projectClasses,
+
+              // --- ADD THIS LINE ---
+              // Checks if the current tab index is 0 (Camera)
+              isActive: _currentIndex == 0,
+
+              onClassesUpdated: () async {
+                await _loadClasses();
+                setState(() {});
+              },
+              onPhotoTaken: _synchronizeData,
+            )
+                : const SizedBox(),
+
+            // Tab 1: Gallery (Always Loaded initially because _visitedIndices[1] is true)
+            _visitedIndices[1]
+                ? ImagesPage(
+              projectName: widget.projectName,
+              images: _projectImages,
+              labelMap: _labelMap,
+              projectClasses: _projectClasses,
+              isLoading: _isLoadingImages,
+              onDataChanged: _synchronizeData,
+              onClassesUpdated: () async {
+                await _loadClasses();
+                setState(() {});
+              },
+            )
+                : const SizedBox(),
+
+            // Tab 2: Map (Lazy Loaded)
+            _visitedIndices[2]
+                ? MapPage(
+              projectName: widget.projectName,
+              mapData: _csvData,
+              projectClasses: _projectClasses,
+              onClassesUpdated: () async {
+                await _loadClasses();
+                setState(() {});
+              },
+            )
+                : const SizedBox(),
+          ],
         ),
         bottomNavigationBar: BottomNavigationBar(
           backgroundColor: Colors.lightGreenAccent,
           currentIndex: _currentIndex,
-          onTap: (index) => setState(() => _currentIndex = index),
+          onTap: _onTabTapped, // Triggers the lazy load logic
           items: const [
             BottomNavigationBarItem(icon: Icon(Icons.camera_alt), label: 'Camera'),
             BottomNavigationBarItem(icon: Icon(Icons.photo_library), label: 'Gallery'),
