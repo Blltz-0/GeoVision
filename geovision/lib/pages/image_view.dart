@@ -475,11 +475,11 @@ class _ImageViewState extends State<ImageView> {
             Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (context) => AnnotationPage(imagePath: currentPath),
+                builder: (context) => AnnotationPage(imagePath: currentPath, projectName: widget.projectName,),
               ),
             );
           },
-          tooltip: 'Import Image',
+          tooltip: 'Annotate Image',
         ),
       ),
     );

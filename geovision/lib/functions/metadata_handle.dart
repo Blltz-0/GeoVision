@@ -380,5 +380,114 @@ class MetadataService {
     }
   }
 
+  // Helper to overwrite CSV (if you don't have one exposed yet)
+  static Future<void> _writeCsvOver(String projectName, List<Map<String, dynamic>> data) async {
+    final docDir = await getApplicationDocumentsDirectory();
+    final file = File('${docDir.path}/projects/$projectName/project_data.csv');
+    final sink = file.openWrite();
+
+    // Header
+    sink.writeln("path,class,lat,lng,time");
+
+    // Rows
+    for (var row in data) {
+      // Ensure we don't write nulls
+      final p = row['path'] ?? '';
+      final c = row['class'] ?? 'Unclassified';
+      final lat = row['lat'] ?? 0.0;
+      final lng = row['lng'] ?? 0.0;
+      final t = row['time'] ?? '';
+
+      // Extract filename from path for the first column if your CSV format expects filename,
+      // otherwise use full path depending on your specific CSV structure.
+      // Based on previous code, you stored filename in first col usually,
+      // but let's assume standard format:
+      final filename = p.split(Platform.pathSeparator).last;
+
+      sink.writeln("$filename,$c,$lat,$lng,$t");
+    }
+    await sink.flush();
+    await sink.close();
+  }
+
+  static Future<File> _getLabelsFile(String projectName) async {
+    final docDir = await getApplicationDocumentsDirectory();
+    final projectDir = Directory('${docDir.path}/projects/$projectName');
+    if (!await projectDir.exists()) {
+      await projectDir.create(recursive: true);
+    }
+    return File('${projectDir.path}/labels.json');
+  }
+
+  /// 1. GET ALL LABELS
+  static Future<List<Map<String, dynamic>>> getLabels(String projectName) async {
+    try {
+      final file = await _getLabelsFile(projectName);
+      if (!await file.exists()) {
+        // Return empty list if file doesn't exist yet
+        return [];
+      }
+      final content = await file.readAsString();
+      if (content.isEmpty) return [];
+
+      final List<dynamic> jsonList = jsonDecode(content);
+      return List<Map<String, dynamic>>.from(jsonList);
+    } catch (e) {
+      debugPrint("Error reading labels: $e");
+      return [];
+    }
+  }
+
+  /// 2. ADD NEW LABEL
+  static Future<void> addLabelDefinition(String projectName, String name, int color) async {
+    final labels = await getLabels(projectName);
+
+    // Prevent duplicates based on name
+    if (labels.any((l) => l['name'] == name)) return;
+
+    labels.add({
+      'name': name,
+      'color': color,
+    });
+
+    await _saveLabelsToDisk(projectName, labels);
+  }
+
+  /// 3. UPDATE EXISTING LABEL
+  static Future<void> updateLabel(String projectName, String oldName, String newName, int newColor) async {
+    final labels = await getLabels(projectName);
+    final index = labels.indexWhere((l) => l['name'] == oldName);
+
+    if (index != -1) {
+      labels[index] = {
+        'name': newName,
+        'color': newColor,
+      };
+      await _saveLabelsToDisk(projectName, labels);
+
+      // Note: If you store applied labels in your CSV (e.g. in a "tags" column),
+      // you would ideally iterate through the CSV here and rename the tag there too.
+    }
+  }
+
+  /// 4. DELETE LABEL
+  static Future<void> deleteLabel(String projectName, String labelName) async {
+    final labels = await getLabels(projectName);
+
+    // Remove the definition
+    labels.removeWhere((l) => l['name'] == labelName);
+
+    await _saveLabelsToDisk(projectName, labels);
+
+    // Note: To be fully consistent, you might want to open project_data.csv
+    // and remove this label from any image that has it applied.
+  }
+
+  /// Helper to write the list back to disk
+  static Future<void> _saveLabelsToDisk(String projectName, List<Map<String, dynamic>> labels) async {
+    final file = await _getLabelsFile(projectName);
+    await file.writeAsString(jsonEncode(labels));
+  }
+
 
 }

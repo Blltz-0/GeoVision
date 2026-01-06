@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geovision/pages/manage_classes_page.dart';
+import 'package:geovision/pages/project_tabs/project_settings.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:native_exif/native_exif.dart';
 import 'package:geovision/pages/project_tabs/camera.dart';
@@ -8,6 +9,7 @@ import 'package:geovision/pages/project_tabs/images.dart';
 import 'package:geovision/pages/project_tabs/map.dart';
 import '../functions/export_service.dart';
 import '../functions/metadata_handle.dart';
+import 'manage_labels_page.dart';
 
 class ProjectContainerPage extends StatefulWidget {
   final String projectName;
@@ -30,13 +32,13 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
   bool _isLoadingImages = true;
 
   // --- UI STATE ---
-  int _currentIndex = 1; // Default is Gallery (index 1)
+  int _currentIndex = 1;
   bool _isExporting = false;
 
   // --- LAZY LOADING STATE ---
   // Initialize with [false, true, false] because _currentIndex is 1 (Gallery).
   // This means Camera (0) and Map (2) won't load until clicked.
-  final List<bool> _visitedIndices = [false, true, false];
+  final List<bool> _visitedIndices = [false, true, false, false];
 
   @override
   void initState() {
@@ -360,6 +362,17 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
     );
   }
 
+  void _openManageLabels() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ManageLabelsPage(projectName: widget.projectName),
+      ),
+    );
+    // Reload data if labels affect global state
+    if (mounted) setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
     // We use Lazy Loading here.
@@ -407,40 +420,24 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
           ),
           title: Text(widget.projectName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           actions: [
+            // Export button remains
             _isExporting
                 ? const Padding(padding: EdgeInsets.all(12.0), child: CircularProgressIndicator())
                 : IconButton(
                 icon: const Icon(Icons.ios_share),
                 onPressed: _handleExport
             ),
-            PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert),
-              onSelected: (value) {
-                if (value == 'rename') _renameProject();
-                if (value == 'classes') _openManageClasses();
-                if (value == 'delete') _confirmDelete();
-              },
-              itemBuilder: (context) => [
-                const PopupMenuItem(value: 'classes', child: Text('Manage Classes')),
-                const PopupMenuItem(value: 'rename', child: Text('Rename Project')),
-                const PopupMenuItem(value: 'delete', child: Text('Delete Project', style: TextStyle(color: Colors.red))),
-              ],
-            ),
           ],
         ),
         body: IndexedStack(
           index: _currentIndex,
           children: [
-            // Tab 0: Camera (Lazy Loaded)
+            // Tab 0: Camera
             _visitedIndices[0]
                 ? CameraPage(
               projectName: widget.projectName,
               projectClasses: _projectClasses,
-
-              // --- ADD THIS LINE ---
-              // Checks if the current tab index is 0 (Camera)
               isActive: _currentIndex == 0,
-
               onClassesUpdated: () async {
                 await _loadClasses();
                 setState(() {});
@@ -449,7 +446,7 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
             )
                 : const SizedBox(),
 
-            // Tab 1: Gallery (Always Loaded initially because _visitedIndices[1] is true)
+            // Tab 1: Gallery
             _visitedIndices[1]
                 ? ImagesPage(
               projectName: widget.projectName,
@@ -465,7 +462,7 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
             )
                 : const SizedBox(),
 
-            // Tab 2: Map (Lazy Loaded)
+            // Tab 2: Map
             _visitedIndices[2]
                 ? MapPage(
               projectName: widget.projectName,
@@ -477,16 +474,30 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
               },
             )
                 : const SizedBox(),
+
+            // Tab 3: Settings (UPDATED)
+            _visitedIndices[3]
+                ? ProjectSettings(
+              projectName: widget.projectName,
+              // Pass the functions from the parent to the child
+              onManageClasses: _openManageClasses,
+              onManageLabels: _openManageLabels,
+              onRenameProject: _renameProject,
+              onDeleteProject: _confirmDelete,
+            )
+                : const SizedBox(),
           ],
         ),
         bottomNavigationBar: BottomNavigationBar(
+          type: BottomNavigationBarType.fixed,
           backgroundColor: Colors.lightGreenAccent,
           currentIndex: _currentIndex,
-          onTap: _onTabTapped, // Triggers the lazy load logic
+          onTap: _onTabTapped,
           items: const [
             BottomNavigationBarItem(icon: Icon(Icons.camera_alt), label: 'Camera'),
             BottomNavigationBarItem(icon: Icon(Icons.photo_library), label: 'Gallery'),
             BottomNavigationBarItem(icon: Icon(Icons.map), label: 'Map'),
+            BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'),
           ],
         ),
       ),
