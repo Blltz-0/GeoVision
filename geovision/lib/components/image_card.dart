@@ -52,7 +52,7 @@ class ImageCard extends StatelessWidget {
               bottom: 0,
               top: 0, // Added 'top: 0' so the gradient fills the full height
               child: GradientCardOverlay(
-                indicatorColor: classColor, // ✅ FIX: Use the variable passed in the constructor
+                indicatorColor: classColor,
               ),
             ),
 

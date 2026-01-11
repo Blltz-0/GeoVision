@@ -9,16 +9,18 @@ import '../../components/class_selector_dropdown.dart';
 class MapPage extends StatefulWidget {
   final String projectName;
   final List<Map<String, dynamic>> mapData;
+  final List<dynamic> projectClasses;
+  final VoidCallback? onClassesUpdated;
 
-  // --- NEW PARAMS ---
-  final List<dynamic> projectClasses;    // Receive data
-  final VoidCallback? onClassesUpdated;  // Receive refresh trigger
+  // UPDATED: Receive Project Type
+  final String projectType;
 
   const MapPage({
     super.key,
     required this.projectName,
     required this.mapData,
     required this.projectClasses,
+    required this.projectType, // UPDATED
     this.onClassesUpdated,
   });
 
@@ -71,19 +73,19 @@ class _MapPageState extends State<MapPage> {
       if (_selectedDateRange != null && timeStr.isNotEmpty) {
         try {
           DateTime pointDate = DateTime.parse(timeStr);
-          // Standardize dates to compare properly (strip time from range start/end if needed)
           DateTime start = _selectedDateRange!.start;
           DateTime end = _selectedDateRange!.end.add(const Duration(days: 1)).subtract(const Duration(seconds: 1));
 
           if (pointDate.isBefore(start) || pointDate.isAfter(end)) {
-            continue; // Skip this point
+            continue;
           }
         } catch (e) {
-          // ignore date parse errors
+          // ignore error
         }
       }
 
-      // 2. CLASS FILTER
+      // 2. CLASS FILTER (Only apply if not All)
+      // Even if dropdown is hidden, _filterClass defaults to All, so this is safe.
       if (_filterClass != "All" && pointClass != _filterClass) {
         continue;
       }
@@ -113,6 +115,7 @@ class _MapPageState extends State<MapPage> {
   }
 
   Future<void> _getCurrentLocation() async {
+    // ... [Same implementation as before] ...
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) return;
 
@@ -166,8 +169,6 @@ class _MapPageState extends State<MapPage> {
       lastDate: DateTime.now(),
       initialDateRange: _selectedDateRange,
     );
-    // If user cancels, newRange is null, so we do nothing.
-    // We only update if they actually picked a range or cleared it.
     if (newRange != null) {
       setState(() => _selectedDateRange = newRange);
       _filterMarkers();
@@ -213,8 +214,6 @@ class _MapPageState extends State<MapPage> {
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.example.geovision',
               ),
-
-              // --- FIX: Only render Heatmap if data exists ---
               if (_showHeatmap && _heatmapData.isNotEmpty)
                 HeatMapLayer(
                   key: ValueKey(_heatmapKey),
@@ -266,22 +265,23 @@ class _MapPageState extends State<MapPage> {
             ),
           ),
 
-          // --- CLASS SELECTOR DROPDOWN ---
-          Positioned(
-            top: 80, left: 0, right: 0,
-            child: ClassSelectorDropdown(
-              projectName: widget.projectName,
-              selectedClass: _filterClass,
-              classes: widget.projectClasses,
-              onClassAdded: widget.onClassesUpdated,
-              onClassSelected: (String newClass) {
-                setState(() => _filterClass = newClass);
-                _filterMarkers();
-              },
+          // --- UPDATED: CLASS SELECTOR DROPDOWN (ONLY FOR CLASSIFICATION) ---
+          if (widget.projectType == 'classification')
+            Positioned(
+              top: 80, left: 0, right: 0,
+              child: ClassSelectorDropdown(
+                projectName: widget.projectName,
+                selectedClass: _filterClass,
+                classes: widget.projectClasses,
+                onClassAdded: widget.onClassesUpdated,
+                onClassSelected: (String newClass) {
+                  setState(() => _filterClass = newClass);
+                  _filterMarkers();
+                },
+              ),
             ),
-          ),
 
-          // --- EMPTY STATE INDICATOR (Optional) ---
+          // --- EMPTY STATE INDICATOR ---
           if (_markers.isEmpty && _heatmapData.isEmpty)
             Positioned(
               bottom: 100,
@@ -311,7 +311,7 @@ class _MapPageState extends State<MapPage> {
         icon: Icon(_showHeatmap ? Icons.location_on : Icons.blur_on, color: _showHeatmap ? Colors.red : Colors.orange),
         onPressed: () {
           setState(() => _showHeatmap = !_showHeatmap);
-          ScaffoldMessenger.of(context).clearSnackBars(); // Clear old snacks immediately
+          ScaffoldMessenger.of(context).clearSnackBars();
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               duration: const Duration(milliseconds: 700),

@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import '../pages/image_view.dart';
-// 1. Import your overlay component
 import 'gradient_card_overlay.dart';
 
 class SliverImageGrid extends StatelessWidget {
@@ -10,6 +9,10 @@ class SliverImageGrid extends StatelessWidget {
   final String projectName;
   final VoidCallback? onBack;
   final List<dynamic> projectClasses;
+  final String projectType;
+
+  // 1. ADD CALLBACK HERE
+  final Function(String)? onAnnotate;
 
   const SliverImageGrid({
     super.key,
@@ -17,7 +20,9 @@ class SliverImageGrid extends StatelessWidget {
     required this.dataList,
     required this.projectName,
     required this.projectClasses,
+    required this.projectType,
     this.onBack,
+    this.onAnnotate, // 2. Receive it
   });
 
   @override
@@ -55,6 +60,8 @@ class SliverImageGrid extends StatelessWidget {
                     allImagePaths: allPaths,
                     initialIndex: index,
                     projectName: projectName,
+                    projectType: projectType,
+                    onAnnotate: onAnnotate, // 3. Pass it down
                   ),
                 ),
               );
@@ -67,34 +74,27 @@ class SliverImageGrid extends StatelessWidget {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(8),
                 color: Colors.grey[200],
-                // Optional: Add border if you want distinct edges
                 border: Border.all(color: Colors.white.withValues(alpha: 0.1), width: 0.5),
               ),
               clipBehavior: Clip.hardEdge,
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  // LAYER 1: The Image (Optimized)
                   Hero(
                     tag: imagePath,
                     child: Image.file(
                       File(imagePath),
                       fit: BoxFit.cover,
-                      cacheWidth: 300, // Keeps memory usage low
+                      cacheWidth: 300,
                       errorBuilder: (ctx, err, stack) => const Center(
                           child: Icon(Icons.broken_image, color: Colors.grey)),
                     ),
                   ),
-
-                  // LAYER 2: Your Gradient Overlay
-                  // We pass the class color so the gradient matches the tag
                   Positioned.fill(
                     child: GradientCardOverlay(
                       indicatorColor: color,
                     ),
                   ),
-
-                  // LAYER 3: The Text Label (Floating on top)
                   Positioned(
                     bottom: 6,
                     left: 8,

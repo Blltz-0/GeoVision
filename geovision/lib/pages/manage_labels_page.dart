@@ -54,7 +54,7 @@ class _ManageLabelsPageState extends State<ManageLabelsPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Manage Labels"),
-        backgroundColor: Colors.lightBlueAccent,
+        backgroundColor: Colors.lightGreenAccent,
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -73,7 +73,7 @@ class _ManageLabelsPageState extends State<ManageLabelsPage> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 IconButton(
-                  icon: const Icon(Icons.edit, color: Colors.blue),
+                  icon: const Icon(Icons.edit, color: Colors.lightGreenAccent),
                   onPressed: () async {
                     await Navigator.push(context, MaterialPageRoute(
                       builder: (context) => CreateLabelPage(
@@ -95,7 +95,7 @@ class _ManageLabelsPageState extends State<ManageLabelsPage> {
         },
       ),
       floatingActionButton: FloatingActionButton(
-        backgroundColor: Colors.lightBlueAccent,
+        backgroundColor: Colors.lightGreenAccent,
         child: const Icon(Icons.add),
         onPressed: () async {
           await Navigator.push(context, MaterialPageRoute(

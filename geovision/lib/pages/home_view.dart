@@ -146,7 +146,7 @@ class _HomeViewPageState extends State<HomeViewPage> {
                   _loadImages();
                   _loadClassColors();
                 },
-                projectClasses: _projectClasses,
+                projectClasses: _projectClasses, projectType: '',
               ),
             ],
           ),

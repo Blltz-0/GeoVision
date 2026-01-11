@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 class ProjectSettings extends StatelessWidget {
   final String projectName;
+  final String projectType; // UPDATED: Receive project type
 
   // Callbacks to trigger functions in the parent widget
   final VoidCallback onManageClasses;
@@ -12,6 +13,7 @@ class ProjectSettings extends StatelessWidget {
   const ProjectSettings({
     super.key,
     required this.projectName,
+    required this.projectType, // UPDATED
     required this.onManageClasses,
     required this.onManageLabels,
     required this.onRenameProject,
@@ -21,31 +23,36 @@ class ProjectSettings extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[50], // Light background
+      backgroundColor: Colors.grey[50],
       body: ListView(
         padding: const EdgeInsets.all(16.0),
         children: [
           _buildSectionHeader("Project Configuration"),
           const SizedBox(height: 20),
           Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(Icons.folder_copy, size: 60, color: Colors.amber,),
-              const SizedBox(width: 20),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    "Project Name",
-                    style: TextStyle(color: Colors.grey, fontSize: 20)),
-                  Text(
-                    projectName,
-                    style: const TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              )
-            ]
+              crossAxisAlignment: CrossAxisAlignment.center,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.folder_copy, size: 60, color: Colors.amber,),
+                const SizedBox(width: 20),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                        "Project Name",
+                        style: TextStyle(color: Colors.grey, fontSize: 20)),
+                    Text(
+                      projectName,
+                      style: const TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
+                    ),
+                    // Optional: Display the type visually
+                    Text(
+                      projectType == 'segmentation' ? "Segmentation Mode" : "Classification Mode",
+                      style: TextStyle(color: Colors.blueGrey, fontSize: 14),
+                    ),
+                  ],
+                )
+              ]
           ),
           const SizedBox(height: 40),
 
@@ -54,20 +61,26 @@ class ProjectSettings extends StatelessWidget {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
             child: Column(
               children: [
-                _buildSettingsTile(
-                  icon: Icons.category,
-                  color: Colors.blue,
-                  title: "Manage Classes",
-                  subtitle: "Add or edit image classifications",
-                  onTap: onManageClasses,
-                ),
-                _buildSettingsTile(
-                  icon: Icons.label,
-                  color: Colors.lightBlue,
-                  title: "Manage Labels",
-                  subtitle: "Add or edit image annotation labels",
-                  onTap: onManageLabels,
-                ),
+                // UPDATED: Show Manage Classes ONLY if Classification
+                if (projectType == 'classification')
+                  _buildSettingsTile(
+                    icon: Icons.category,
+                    color: Colors.blue,
+                    title: "Manage Classes",
+                    subtitle: "Add or edit image classifications",
+                    onTap: onManageClasses,
+                  ),
+
+                // UPDATED: Show Manage Labels ONLY if Segmentation
+                if (projectType == 'segmentation')
+                  _buildSettingsTile(
+                    icon: Icons.label,
+                    color: Colors.lightBlue,
+                    title: "Manage Labels",
+                    subtitle: "Add or edit image annotation labels",
+                    onTap: onManageLabels,
+                  ),
+
                 const Divider(height: 1),
                 _buildSettingsTile(
                   icon: Icons.drive_file_rename_outline,

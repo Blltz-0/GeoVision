@@ -1,23 +1,23 @@
 import 'package:flutter/material.dart';
 import '../pages/project_container.dart';
-import '../functions/metadata_handle.dart'; // Import your service
+import '../functions/metadata_handle.dart';
 
 class ProjectCard extends StatelessWidget {
   final String title;
   final VoidCallback? onReturn;
+  final IconData? iconData;
 
   const ProjectCard({
     super.key,
     required this.title,
     required this.onReturn,
+    this.iconData,
   });
 
-  /// 1. Helper to fetch stats (Image count & Class count)
   Future<Map<String, int>> _fetchProjectStats() async {
-    // Run both fetch operations in parallel
     final results = await Future.wait([
-      MetadataService.readCsvData(title), // Get all images
-      MetadataService.getClasses(title),  // Get all defined classes
+      MetadataService.readCsvData(title),
+      MetadataService.getClasses(title),
     ]);
 
     final List<Map<String, dynamic>> images = results[0];
@@ -33,18 +33,21 @@ class ProjectCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: () async {
+        // Just navigate directly. The ProjectContainerPage will handle the timestamp update.
         await Navigator.push(context, MaterialPageRoute(
           builder: (context) => ProjectContainerPage(projectName: title),
         ));
+
+        // Refresh the home page list when returning
         if (onReturn != null) {
           onReturn!();
         }
       },
       child: Container(
-        // Removed fixed width: 75 so it can expand to fit the stats
-        height: 90,
+        width: 100,
+        height: 100,
         margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 5),
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: Colors.lightGreenAccent,
           borderRadius: BorderRadius.circular(12),
@@ -59,7 +62,6 @@ class ProjectCard extends StatelessWidget {
         child: FutureBuilder<Map<String, int>>(
           future: _fetchProjectStats(),
           builder: (context, snapshot) {
-            // Default values while loading
             int imageCount = 0;
             int classCount = 0;
 
@@ -69,39 +71,43 @@ class ProjectCard extends StatelessWidget {
             }
 
             return Column(
+              mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    // 1. Folder Icon (Left)
-                    const Icon(Icons.folder, color: Colors.green, size: 30),
-
-                    // 2. Info Column (Right)
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        // Title
-                        const SizedBox(height: 4),
-
-                        // Stats Row (Images & Labels)
-                        _buildStatBadge(Icons.image, imageCount.toString(), Colors.blue),
-                        const SizedBox(width: 12),
-                        // Class/Tag Count
-                        _buildStatBadge(Icons.label, classCount.toString(), Colors.orange),
-                      ],
+                    Icon(
+                        iconData ?? Icons.folder,
+                        color: Colors.green[800],
+                        size: 20
                     ),
 
+                    const SizedBox(width: 12),
+
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          _buildStatBadge(Icons.image, imageCount.toString(), Colors.blue[800]!),
+                          const SizedBox(height: 4),
+                          _buildStatBadge(Icons.label, classCount.toString(), Colors.orange[900]!),
+                        ],
+                      ),
+                    ),
                   ],
                 ),
+                const SizedBox(height: 8),
                 Text(
                   title,
                   style: const TextStyle(
                     color: Colors.black87,
                     fontWeight: FontWeight.bold,
-                    fontSize: 16,
+                    fontSize: 13,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
                 ),
               ],
             );
@@ -111,18 +117,20 @@ class ProjectCard extends StatelessWidget {
     );
   }
 
-  // Helper widget for the small icons with numbers
   Widget _buildStatBadge(IconData icon, String text, Color color) {
     return Row(
       children: [
         Icon(icon, size: 14, color: color),
         const SizedBox(width: 4),
-        Text(
-          text,
-          style: TextStyle(
-            fontSize: 12,
-            color: Colors.grey[700],
-            fontWeight: FontWeight.w500,
+        Flexible(
+          child: Text(
+            text,
+            style: TextStyle(
+              fontSize: 12,
+              color: Colors.grey[800],
+              fontWeight: FontWeight.w600,
+            ),
+            overflow: TextOverflow.ellipsis,
           ),
         ),
       ],

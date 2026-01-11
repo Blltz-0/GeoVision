@@ -51,7 +51,7 @@ class _CreateLabelPageState extends State<CreateLabelPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Colors.lightBlueAccent, // Blue theme for Labels
+        backgroundColor: Colors.lightGreenAccent,
         title: Text(_isEditing ? "Edit Label" : "Create New Label"),
         actions: [IconButton(icon: const Icon(Icons.check), onPressed: _saveLabel)],
       ),

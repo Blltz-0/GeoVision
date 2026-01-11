@@ -1,23 +1,250 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:geocoding/geocoding.dart';
 
-// Adjust these imports to match your project structure
 import '../components/class_creator.dart';
 import '../functions/metadata_handle.dart';
 import '../components/ellipsis_menu.dart';
-import 'annotation_page.dart';
 
+// --- ROBUST LOCATION WIDGET (Unchanged) ---
+class LocationDisplay extends StatefulWidget {
+  final double latitude;
+  final double longitude;
+  final TextStyle style;
+
+  const LocationDisplay({
+    super.key,
+    required this.latitude,
+    required this.longitude,
+    required this.style,
+  });
+
+  @override
+  State<LocationDisplay> createState() => _LocationDisplayState();
+}
+
+class _LocationDisplayState extends State<LocationDisplay> {
+  String _displayText = "Loading...";
+
+  @override
+  void initState() {
+    super.initState();
+    _resolveAddress();
+  }
+
+  @override
+  void didUpdateWidget(LocationDisplay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.latitude != oldWidget.latitude || widget.longitude != oldWidget.longitude) {
+      _resolveAddress();
+    }
+  }
+
+  Future<void> _resolveAddress() async {
+    if (widget.latitude == 0.0 && widget.longitude == 0.0) {
+      if (mounted) setState(() => _displayText = "No GPS Data");
+      return;
+    }
+
+    String latLngString = "${widget.latitude.toStringAsFixed(5)}, ${widget.longitude.toStringAsFixed(5)}";
+    if (mounted) setState(() => _displayText = latLngString);
+
+    try {
+      List<Placemark> placemarks = await placemarkFromCoordinates(
+          widget.latitude,
+          widget.longitude
+      );
+
+      if (placemarks.isNotEmpty && mounted) {
+        Placemark place = placemarks[0];
+        String part1 = place.locality ?? "";
+        String part2 = place.administrativeArea ?? "";
+        String part3 = place.country ?? "";
+
+        String finalName = "";
+        if (part1.isNotEmpty && part2.isNotEmpty) {
+          finalName = "$part1, $part2";
+        } else if (part1.isNotEmpty) {
+          finalName = "$part1, $part3";
+        } else if (part2.isNotEmpty) {
+          finalName = "$part2, $part3";
+        } else {
+          finalName = part3;
+        }
+
+        if (finalName.trim().isEmpty || finalName.trim() == ",") {
+          finalName = "Unknown Location";
+        }
+
+        setState(() => _displayText = finalName);
+      }
+    } catch (e) {
+      debugPrint("⚠️ Geocoding Error: $e");
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      _displayText,
+      style: widget.style,
+      overflow: TextOverflow.ellipsis,
+    );
+  }
+}
+
+// --- EDIT DIALOG (Unchanged) ---
+class EditMetadataDialog extends StatefulWidget {
+  final String filename;
+  final double initialLat;
+  final double initialLng;
+  final DateTime initialDate;
+  final Function(double lat, double lng, DateTime date) onSave;
+
+  const EditMetadataDialog({
+    super.key,
+    required this.filename,
+    required this.initialLat,
+    required this.initialLng,
+    required this.initialDate,
+    required this.onSave,
+  });
+
+  @override
+  State<EditMetadataDialog> createState() => _EditMetadataDialogState();
+}
+
+class _EditMetadataDialogState extends State<EditMetadataDialog> {
+  late TextEditingController _latController;
+  late TextEditingController _lngController;
+  late DateTime _selectedDate;
+
+  @override
+  void initState() {
+    super.initState();
+    _latController = TextEditingController(text: widget.initialLat.toString());
+    _lngController = TextEditingController(text: widget.initialLng.toString());
+    _selectedDate = widget.initialDate;
+  }
+
+  @override
+  void dispose() {
+    _latController.dispose();
+    _lngController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickDateTime() async {
+    final date = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2000),
+      lastDate: DateTime.now(),
+    );
+    if (date == null) return;
+
+    if (!mounted) return;
+
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(_selectedDate),
+    );
+    if (time == null) return;
+
+    setState(() {
+      _selectedDate = DateTime(
+          date.year, date.month, date.day, time.hour, time.minute
+      );
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text("Edit Metadata"),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("File: ${widget.filename}", style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 15),
+
+            const Text("Date & Time", style: TextStyle(fontWeight: FontWeight.bold)),
+            InkWell(
+              onTap: _pickDateTime,
+              child: Container(
+                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+                decoration: BoxDecoration(
+                    border: Border(bottom: BorderSide(color: Colors.grey.shade400))
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text("${_selectedDate.year}-${_selectedDate.month}-${_selectedDate.day}   ${_selectedDate.hour}:${_selectedDate.minute.toString().padLeft(2, '0')}"),
+                    const Icon(Icons.edit_calendar, size: 20, color: Colors.blue),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 15),
+
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: _latController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+                    decoration: const InputDecoration(labelText: "Latitude", border: OutlineInputBorder()),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: TextField(
+                    controller: _lngController,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+                    decoration: const InputDecoration(labelText: "Longitude", border: OutlineInputBorder()),
+                  ),
+                ),
+              ],
+            )
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
+        ElevatedButton(
+            onPressed: () {
+              final lat = double.tryParse(_latController.text) ?? widget.initialLat;
+              final lng = double.tryParse(_lngController.text) ?? widget.initialLng;
+              widget.onSave(lat, lng, _selectedDate);
+              Navigator.pop(context);
+            },
+            child: const Text("Save")
+        ),
+      ],
+    );
+  }
+}
+
+// --- MAIN IMAGE VIEW ---
 class ImageView extends StatefulWidget {
   final List<String> allImagePaths;
   final int initialIndex;
   final String projectName;
+  final String projectType;
+
+  // 1. ADD CALLBACK HERE
+  final Function(String path)? onAnnotate;
 
   const ImageView({
     super.key,
     required this.allImagePaths,
     required this.initialIndex,
     required this.projectName,
+    required this.projectType,
+    this.onAnnotate, // 2. Receive it
   });
 
   @override
@@ -27,12 +254,8 @@ class ImageView extends StatefulWidget {
 class _ImageViewState extends State<ImageView> {
   late PageController _pageController;
   late int _currentIndex;
-
-  // --- 1. LOCAL STATE FOR PATHS ---
-  // We copy the paths here so we can update them when a file is renamed
   late List<String> _currentImagePaths;
-  bool _hasChanges = false; // Tracks if we need to tell the previous screen to refresh
-
+  bool _hasChanges = false;
   List<Map<String, dynamic>> _metadataCache = [];
   Map<String, Color> _classColorMap = {};
 
@@ -41,10 +264,7 @@ class _ImageViewState extends State<ImageView> {
     super.initState();
     _currentIndex = widget.initialIndex;
     _pageController = PageController(initialPage: widget.initialIndex);
-
-    // Initialize our local list from the widget data
     _currentImagePaths = List.from(widget.allImagePaths);
-
     _loadMetadata();
   }
 
@@ -54,7 +274,6 @@ class _ImageViewState extends State<ImageView> {
     super.dispose();
   }
 
-  /// Helper to safely get filename from any path string (handles / and \)
   String _getFilename(String path) {
     return path.split(Platform.pathSeparator).last;
   }
@@ -75,12 +294,9 @@ class _ImageViewState extends State<ImageView> {
     }
   }
 
-  // Find info for the currently visible image
   Map<String, dynamic> _getCurrentImageInfo(String imagePath) {
     if (_metadataCache.isEmpty) return {};
-
     final String targetName = _getFilename(imagePath);
-
     return _metadataCache.firstWhere(
           (element) {
         String csvPath = element['path']?.toString() ?? "";
@@ -96,75 +312,89 @@ class _ImageViewState extends State<ImageView> {
     showDialog(
       context: context,
       builder: (BuildContext dialogContext) {
-        return AlertDialog(
-          title: const Text('Image Information'),
-          content: SizedBox(
-            height: 200,
-            width: double.maxFinite,
-            child: FutureBuilder<List<Map<String, dynamic>>>(
-              future: MetadataService.readCsvData(widget.projectName),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
+        return FutureBuilder<List<Map<String, dynamic>>>(
+          future: MetadataService.readCsvData(widget.projectName),
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting) {
+              return const AlertDialog(content: SizedBox(height: 100, child: Center(child: CircularProgressIndicator())));
+            }
 
-                if (!snapshot.hasData || snapshot.data!.isEmpty) {
-                  return const Text('No data found.');
-                }
+            Map<String, dynamic> imageInfo = {};
+            if (snapshot.hasData) {
+              imageInfo = snapshot.data!.firstWhere(
+                    (element) => _getFilename(element['path'].toString()) == targetFilename,
+                orElse: () => {},
+              );
+            }
 
-                final Map<String, dynamic> imageInfo = snapshot.data!.firstWhere(
-                      (element) {
-                    final String csvPath = element['path']?.toString() ?? "";
-                    return _getFilename(csvPath) == targetFilename;
-                  },
-                  orElse: () => {},
-                );
+            double lat = imageInfo['lat'] is double
+                ? imageInfo['lat']
+                : (double.tryParse(imageInfo['lat'].toString()) ?? 0.0);
 
-                if (imageInfo.isEmpty) {
-                  return Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.error_outline, color: Colors.orange, size: 40),
-                      const SizedBox(height: 10),
-                      const Text("Image not found in records."),
-                      const SizedBox(height: 5),
-                      Text(targetFilename,
-                          style: const TextStyle(fontSize: 10, color: Colors.grey),
-                          textAlign: TextAlign.center),
-                    ],
-                  );
-                }
+            double lng = imageInfo['lng'] is double
+                ? imageInfo['lng']
+                : (double.tryParse(imageInfo['lng'].toString()) ?? 0.0);
 
-                final String lat = imageInfo['lat']?.toString() ?? "N/A";
-                final String lng = imageInfo['lng']?.toString() ?? "N/A";
-                String dateString = "Unknown";
-                String timeString = "Unknown";
+            DateTime dt = DateTime.now();
+            if (imageInfo['time'] != null) {
+              try { dt = DateTime.parse(imageInfo['time']); } catch (_) {}
+            }
 
-                if (imageInfo['time'] != null) {
-                  try {
-                    final DateTime dt = DateTime.parse(imageInfo['time']);
-                    dateString = "${dt.year}-${dt.month}-${dt.day}";
-                    timeString = "${dt.hour}:${dt.minute.toString().padLeft(2, '0')}";
-                  } catch (_) {
-                    dateString = "Invalid Date";
-                  }
-                }
+            return AlertDialog(
+              title: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Image Info'),
+                  IconButton(
+                    icon: const Icon(Icons.edit, color: Colors.blue),
+                    tooltip: "Edit Metadata",
+                    onPressed: () {
+                      Navigator.pop(context);
+                      showDialog(
+                          context: context,
+                          builder: (ctx) => EditMetadataDialog(
+                            filename: targetFilename,
+                            initialLat: lat,
+                            initialLng: lng,
+                            initialDate: dt,
+                            onSave: (newLat, newLng, newDate) async {
+                              await MetadataService.updateImageMetadata(
+                                  projectName: widget.projectName,
+                                  imagePath: imagePath,
+                                  lat: newLat,
+                                  lng: newLng,
+                                  time: newDate
+                              );
 
-                return Column(
+                              if (mounted) {
+                                setState(() {
+                                  _hasChanges = true;
+                                  _loadMetadata();
+                                });
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text("Image & CSV Updated"))
+                                );
+                              }
+                            },
+                          )
+                      );
+                    },
+                  )
+                ],
+              ),
+              content: SizedBox(
+                height: 180,
+                width: double.maxFinite,
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    Text("File: $targetFilename", style: const TextStyle(fontWeight: FontWeight.bold)),
+                    Text("File: $targetFilename", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
                     const Divider(),
                     Row(children: [
                       const Icon(Icons.calendar_today, size: 16, color: Colors.blue),
                       const SizedBox(width: 8),
-                      Text("Date: $dateString"),
-                    ]),
-                    Row(children: [
-                      const Icon(Icons.access_time, size: 16, color: Colors.blue),
-                      const SizedBox(width: 8),
-                      Text("Time: $timeString"),
+                      Text("${dt.year}-${dt.month}-${dt.day}  ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}"),
                     ]),
                     Row(children: [
                       const Icon(Icons.location_on, size: 16, color: Colors.red),
@@ -177,40 +407,34 @@ class _ImageViewState extends State<ImageView> {
                       Text("Lng: $lng"),
                     ]),
                   ],
-                );
-              },
-            ),
-          ),
-          actions: <Widget>[
-            TextButton(
-              child: const Text('Close'),
-              onPressed: () => Navigator.of(dialogContext).pop(),
-            ),
-          ],
+                ),
+              ),
+              actions: <Widget>[
+                TextButton(
+                  child: const Text('Close'),
+                  onPressed: () => Navigator.of(dialogContext).pop(),
+                ),
+              ],
+            );
+          },
         );
       },
     );
   }
 
   void _showTaggingSheet() async {
-    // 1. Capture the path before any async gaps to be safe
     final currentPath = _currentImagePaths[_currentIndex];
-
-    // 2. Fetch data (Async)
     final classes = await MetadataService.getClasses(widget.projectName);
 
-    // 3. Check mounted BEFORE showing the sheet
-    if (!mounted) return;
-
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+
+    if (!mounted) return;
 
     await showModalBottomSheet(
       context: context,
       useSafeArea: true,
       isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (ctx) => Container(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -236,29 +460,21 @@ class _ImageViewState extends State<ImageView> {
               child: ListView(
                 shrinkWrap: true,
                 children: classes.map((cls) => ListTile(
-                  leading: CircleAvatar(
-                      backgroundColor: Color(cls['color']), radius: 12
-                  ),
+                  leading: CircleAvatar(backgroundColor: Color(cls['color']), radius: 12),
                   title: Text(cls['name'], style: const TextStyle(fontWeight: FontWeight.bold)),
                   onTap: () async {
-                    // --- ASYNC OPERATION ---
                     String? newPath = await MetadataService.tagImage(
                       widget.projectName,
                       currentPath,
                       cls['name'],
                     );
 
-                    // --- FIX: CHECK MOUNTED AFTER AWAIT ---
                     if (!mounted) return;
-
-                    Navigator.pop(context); // Close sheet safely
+                    Navigator.pop(context);
 
                     if (newPath != null) {
-                      // Clear cache logic...
                       await FileImage(File(currentPath)).evict();
                       await FileImage(File(newPath)).evict();
-
-                      if (!mounted) return; // Check again before setState
 
                       setState(() {
                         _currentImagePaths[_currentIndex] = newPath;
@@ -280,43 +496,28 @@ class _ImageViewState extends State<ImageView> {
             ),
             const Divider(),
             ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
-                foregroundColor: Colors.white,
-              ),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, foregroundColor: Colors.white),
               icon: const Icon(Icons.add),
               label: const Text("Create New Class"),
               onPressed: () async {
-                // Close the current sheet first
                 Navigator.pop(context);
-
-                // Navigate to create page (ASYNC)
                 await Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (context) => CreateClassPage(projectName: widget.projectName),
-                  ),
+                  MaterialPageRoute(builder: (context) => CreateClassPage(projectName: widget.projectName)),
                 );
-
-                // --- FIX: CHECK MOUNTED BEFORE RE-OPENING SHEET ---
-                if (!mounted) return;
-
-                // Now safe to call a method that uses 'context'
-                _showTaggingSheet();
+                if (mounted) _showTaggingSheet();
               },
             )
           ],
         ),
       ),
     ).whenComplete(() {
-      // safe to call this without context
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    // Intercept back button to ensure we pass changes back to ImageGrid
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, result) {
@@ -330,7 +531,6 @@ class _ImageViewState extends State<ImageView> {
           iconTheme: const IconThemeData(color: Colors.white),
           elevation: 0,
           title: Text(
-            // Use local list for count
             "${_currentIndex + 1} of ${_currentImagePaths.length}",
             style: const TextStyle(color: Colors.white),
           ),
@@ -347,7 +547,6 @@ class _ImageViewState extends State<ImageView> {
                   imagePath: currentPath,
                 );
 
-                // Return 'true' to signal a deletion happened
                 navigator.pop(true);
                 messenger.showSnackBar(const SnackBar(
                   content: Text("Image Deleted"),
@@ -355,26 +554,33 @@ class _ImageViewState extends State<ImageView> {
                   duration: Duration(seconds: 1),
                 ));
               },
-              onTag: _showTaggingSheet,
+              // onTag removed here
             ),
           ],
         ),
         body: PageView.builder(
           controller: _pageController,
-          itemCount: _currentImagePaths.length, // Use local list
+          itemCount: _currentImagePaths.length,
           onPageChanged: (index) {
             setState(() {
               _currentIndex = index;
             });
           },
           itemBuilder: (context, index) {
-            final imagePath = _currentImagePaths[index]; // Use local list
+            final imagePath = _currentImagePaths[index];
             final info = _getCurrentImageInfo(imagePath);
 
             String className = info['class'] ?? "Unclassified";
             Color tagColor = _classColorMap[className] ?? Colors.grey;
-            String lat = info['lat']?.toString() ?? "--";
-            String lng = info['lng']?.toString() ?? "--";
+
+            double lat = info['lat'] is double
+                ? info['lat']
+                : (double.tryParse(info['lat'].toString()) ?? 0.0);
+
+            double lng = info['lng'] is double
+                ? info['lng']
+                : (double.tryParse(info['lng'].toString()) ?? 0.0);
+
             String dateString = "--";
 
             if (info['time'] != null) {
@@ -386,7 +592,6 @@ class _ImageViewState extends State<ImageView> {
 
             return Column(
               children: [
-                // Top Information Bar
                 Container(
                   height: 100,
                   width: double.infinity,
@@ -401,9 +606,7 @@ class _ImageViewState extends State<ImageView> {
                           Expanded(
                             child: Text(
                               _getFilename(imagePath),
-                              style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold),
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
@@ -430,10 +633,10 @@ class _ImageViewState extends State<ImageView> {
                           const Icon(Icons.location_on, color: Colors.redAccent, size: 14),
                           const SizedBox(width: 5),
                           Expanded(
-                            child: Text(
-                              "$lat, $lng",
+                            child: LocationDisplay(
+                              latitude: lat,
+                              longitude: lng,
                               style: const TextStyle(color: Colors.white70, fontSize: 12),
-                              overflow: TextOverflow.ellipsis,
                             ),
                           ),
                         ],
@@ -441,8 +644,6 @@ class _ImageViewState extends State<ImageView> {
                     ],
                   ),
                 ),
-
-                // Image Viewer
                 Expanded(
                   child: InteractiveViewer(
                     panEnabled: true,
@@ -462,26 +663,36 @@ class _ImageViewState extends State<ImageView> {
             );
           },
         ),
-        floatingActionButton: FloatingActionButton.extended(
-          heroTag: 'fab_annotate',
-          shape: const StadiumBorder(),
-          backgroundColor: Colors.white,
-          label: const Text("Annotate", style: TextStyle(color: Colors.black87)),
-          icon: const Icon(Icons.brush_rounded),
-          onPressed: () {
-            // Get the current path from your local state
-            final String currentPath = _currentImagePaths[_currentIndex];
-
-            Navigator.push(
-              context,
-              MaterialPageRoute(
-                builder: (context) => AnnotationPage(imagePath: currentPath, projectName: widget.projectName,),
-              ),
-            );
-          },
-          tooltip: 'Annotate Image',
-        ),
+        // --- MODIFIED FAB LOGIC HERE ---
+        floatingActionButton: _buildFab(),
       ),
     );
+  }
+
+  // Helper widget to keep build method clean
+  Widget? _buildFab() {
+    if (widget.projectType == 'segmentation') {
+      return FloatingActionButton.extended(
+        heroTag: "annotate_fab",
+        onPressed: () {
+          if (widget.onAnnotate != null) {
+            widget.onAnnotate!(_currentImagePaths[_currentIndex]);
+          }
+        },
+        icon: const Icon(Icons.brush),
+        label: const Text("Annotate"),
+        backgroundColor: Colors.lightGreenAccent,
+      );
+    } else if (widget.projectType == 'classification') {
+      return FloatingActionButton.extended(
+        heroTag: "tag_fab",
+        onPressed: _showTaggingSheet,
+        icon: const Icon(Icons.label),
+        label: const Text("Tag Image"),
+        backgroundColor: Colors.blueAccent,
+        foregroundColor: Colors.white,
+      );
+    }
+    return null;
   }
 }

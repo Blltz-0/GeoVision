@@ -7,23 +7,22 @@ import 'package:native_exif/native_exif.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-// Your custom imports
 import 'package:geovision/components/class_selector_dropdown.dart';
-// Note: Ensure this points to the UPDATED SliverImageGrid file above
 import '../../components/image_grid.dart';
 import '../../functions/metadata_handle.dart';
 import '../../functions/camera/image_processor.dart';
 
 class ImagesPage extends StatefulWidget {
   final String projectName;
-
-  // --- DATA FROM PARENT ---
   final List<File> images;
   final Map<String, String> labelMap;
   final List<dynamic> projectClasses;
   final bool isLoading;
+  final String projectType;
 
-  // Callbacks
+  // 1. ADD CALLBACK HERE
+  final Function(String)? onAnnotate;
+
   final VoidCallback? onDataChanged;
   final VoidCallback? onClassesUpdated;
 
@@ -34,8 +33,10 @@ class ImagesPage extends StatefulWidget {
     required this.labelMap,
     required this.projectClasses,
     required this.isLoading,
+    required this.projectType,
     this.onDataChanged,
     this.onClassesUpdated,
+    this.onAnnotate, // 2. Receive it
   });
 
   @override
@@ -48,14 +49,14 @@ class _ImagesPageState extends State<ImagesPage> {
   bool _groupByClass = false;
 
   Future<void> _importImage() async {
-    // 1. Permission Check
+    // Permission Check
     if (Platform.isAndroid) {
       var status = await Permission.accessMediaLocation.status;
       if (!status.isGranted) status = await Permission.accessMediaLocation.request();
       if (await Permission.photos.request().isDenied) return;
     }
 
-    // 2. Pick Multiple Images
+    // Pick Multiple Images
     final ImagePicker picker = ImagePicker();
     final List<XFile> pickedFiles = await picker.pickMultiImage();
 
@@ -63,7 +64,6 @@ class _ImagesPageState extends State<ImagesPage> {
 
     setState(() => _isImporting = true);
 
-    // 3. Determine Class (Applies to the whole batch)
     String targetClass = "Unclassified";
     if (_filterClass != "All") {
       targetClass = _filterClass;
@@ -72,7 +72,6 @@ class _ImagesPageState extends State<ImagesPage> {
     int successCount = 0;
 
     try {
-      // 4. Loop through every selected file
       for (final file in pickedFiles) {
         try {
           await _processSingleImport(file, targetClass);
@@ -82,7 +81,6 @@ class _ImagesPageState extends State<ImagesPage> {
         }
       }
 
-      // 5. UI Feedback
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Successfully imported $successCount images")),
@@ -99,9 +97,7 @@ class _ImagesPageState extends State<ImagesPage> {
     }
   }
 
-  // Helper to process a single file from the batch
   Future<void> _processSingleImport(XFile file, String targetClass) async {
-    // A. Capture Original GPS (Before processing wipes it)
     Position? importedPosition;
     try {
       final exif = await Exif.fromPath(file.path);
@@ -120,10 +116,8 @@ class _ImagesPageState extends State<ImagesPage> {
       debugPrint("Could not read EXIF for ${file.name}: $e");
     }
 
-    // B. Resize & Crop (using your image_processor.dart)
     await compute(cropSquareImage, file.path);
 
-    // C. Generate Filename
     final appDir = await getApplicationDocumentsDirectory();
     final projectDir = Directory('${appDir.path}/projects/${widget.projectName}/images');
 
@@ -138,10 +132,8 @@ class _ImagesPageState extends State<ImagesPage> {
     );
     final String newPath = '${projectDir.path}/$fileName';
 
-    // D. Copy File
     await File(file.path).copy(newPath);
 
-    // E. Save Metadata & CSV
     await MetadataService.embedMetadata(
       filePath: newPath,
       lat: importedPosition?.latitude ?? 0.0,
@@ -157,36 +149,29 @@ class _ImagesPageState extends State<ImagesPage> {
     );
   }
 
-  // --- HELPER: Build Grouped Sections as SLIVERS ---
-  // This replaces your old _buildGroupedView function
   List<Widget> _buildGroupedSlivers(List<File> imagesToDisplay) {
-    // Get unique classes from the current list
     final Set<String> uniqueClasses = imagesToDisplay.map((file) {
       final filename = file.path.split(Platform.pathSeparator).last;
       return widget.labelMap[filename] ?? "Unclassified";
     }).toSet();
 
-    // Sort classes alphabetically
     final sortedClasses = uniqueClasses.toList()..sort();
 
     List<Widget> slivers = [];
 
     for (var className in sortedClasses) {
-      // Filter images for this specific class
       final classImages = imagesToDisplay.where((file) {
         final filename = file.path.split(Platform.pathSeparator).last;
         final label = widget.labelMap[filename] ?? "Unclassified";
         return label == className;
       }).toList();
 
-      // Get class color
       final classDef = widget.projectClasses.firstWhere(
               (c) => c['name'] == className,
           orElse: () => {'color': Colors.grey.toARGB32()}
       );
       Color headerColor = Color(classDef['color']);
 
-      // Prepare grid data
       final gridData = classImages.map((file) {
         final filename = file.path.split(Platform.pathSeparator).last;
         return {
@@ -195,7 +180,6 @@ class _ImagesPageState extends State<ImagesPage> {
         };
       }).toList();
 
-      // 1. Add the Header for this class
       slivers.add(
           SliverToBoxAdapter(
             child: Container(
@@ -222,7 +206,6 @@ class _ImagesPageState extends State<ImagesPage> {
           )
       );
 
-      // 2. Add the Grid for this class
       slivers.add(
           SliverPadding(
             padding: const EdgeInsets.symmetric(horizontal: 10),
@@ -232,12 +215,13 @@ class _ImagesPageState extends State<ImagesPage> {
               projectName: widget.projectName,
               onBack: () => widget.onDataChanged?.call(),
               projectClasses: widget.projectClasses,
+              projectType: widget.projectType,
+              onAnnotate: widget.onAnnotate, // 3. Pass it down
             ),
           )
       );
     }
 
-    // Bottom padding for the grouped list
     slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 80)));
 
     return slivers;
@@ -249,7 +233,6 @@ class _ImagesPageState extends State<ImagesPage> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    // Filter based on Dropdown Selection first
     List<File> filteredImages = widget.images;
     if (_filterClass != "All") {
       filteredImages = widget.images.where((file) {
@@ -259,7 +242,6 @@ class _ImagesPageState extends State<ImagesPage> {
       }).toList();
     }
 
-    // Data for Flat View
     final List<Map<String, dynamic>> flatGridData = filteredImages.map((file) {
       final filename = file.path.split(Platform.pathSeparator).last;
       return {
@@ -269,86 +251,81 @@ class _ImagesPageState extends State<ImagesPage> {
     }).toList();
 
     return Scaffold(
-      // CHANGED: Use CustomScrollView with Slivers for lazy loading
       body: CustomScrollView(
         physics: const AlwaysScrollableScrollPhysics(
           parent: BouncingScrollPhysics(),
         ),
         slivers: [
-          // 1. Header Section (Dropdown + Toggle)
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(10),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  // --- SWITCH UI ---
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        // LEFT: Image Count
-                        Text(
-                          "${filteredImages.length} Images",
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.grey[600],
+                  if (widget.projectType == 'classification') ...[
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            "${filteredImages.length} Images",
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.grey[600],
+                            ),
                           ),
-                        ),
-
-                        // RIGHT: Group Switch
-                        Row(
-                          children: [
-                            Text(
-                                "Group by Class",
-                                style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.grey[600])
-                            ),
-                            const SizedBox(width: 8),
-                            Transform.scale(
-                              scale: 0.8,
-                              child: Switch(
-                                value: _groupByClass,
-                                activeThumbColor: Colors.lightGreen,
-                                onChanged: (val) {
-                                  setState(() => _groupByClass = val);
-                                  ScaffoldMessenger.of(context).showSnackBar(
-                                    SnackBar(
-                                      duration: const Duration(milliseconds: 700),
-                                      content: Text(_groupByClass ? "Grouped by Class" : "Ungrouped"),
-                                      behavior: SnackBarBehavior.floating,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(10),
-                                      ),
-                                    ),
-                                  );
-                                },
+                          Row(
+                            children: [
+                              Text(
+                                  "Group by Class",
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.grey[600])
                               ),
-                            ),
-                          ],
-                        ),
-                      ],
+                              const SizedBox(width: 8),
+                              Transform.scale(
+                                scale: 0.8,
+                                child: Switch(
+                                  value: _groupByClass,
+                                  activeThumbColor: Colors.lightGreen,
+                                  onChanged: (val) {
+                                    setState(() => _groupByClass = val);
+                                  },
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-
-                  // Dropdown
-                  ClassSelectorDropdown(
-                    projectName: widget.projectName,
-                    selectedClass: _filterClass,
-                    classes: widget.projectClasses,
-                    onClassAdded: widget.onClassesUpdated,
-                    onClassSelected: (String newClass) {
-                      setState(() => _filterClass = newClass);
-                    },
-                  ),
-                  const SizedBox(height: 10),
+                    ClassSelectorDropdown(
+                      projectName: widget.projectName,
+                      selectedClass: _filterClass,
+                      classes: widget.projectClasses,
+                      onClassAdded: widget.onClassesUpdated,
+                      onClassSelected: (String newClass) {
+                        setState(() => _filterClass = newClass);
+                      },
+                    ),
+                    const SizedBox(height: 10),
+                  ] else ...[
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+                      child: Text(
+                        "${filteredImages.length} Images",
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ),
+                  ]
                 ],
               ),
             ),
           ),
 
-          // 2. Empty State
           if (filteredImages.isEmpty)
             const SliverFillRemaining(
               child: Center(
@@ -356,13 +333,10 @@ class _ImagesPageState extends State<ImagesPage> {
               ),
             )
 
-          // 3. Conditional View
-          else if (_groupByClass)
-          // Use spread operator to insert list of Slivers
+          else if (_groupByClass && widget.projectType == 'classification')
             ..._buildGroupedSlivers(filteredImages)
 
           else
-          // Single Flat Grid Sliver
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: 10),
               sliver: SliverImageGrid(
@@ -371,11 +345,12 @@ class _ImagesPageState extends State<ImagesPage> {
                 projectName: widget.projectName,
                 onBack: () => widget.onDataChanged?.call(),
                 projectClasses: widget.projectClasses,
+                projectType: widget.projectType,
+                onAnnotate: widget.onAnnotate, // 4. Pass it down
               ),
             ),
 
-          // Extra padding for FAB in flat view (grouped view adds it inside _buildGroupedSlivers)
-          if (!_groupByClass && filteredImages.isNotEmpty)
+          if ((!_groupByClass || widget.projectType != 'classification') && filteredImages.isNotEmpty)
             const SliverToBoxAdapter(child: SizedBox(height: 80)),
         ],
       ),

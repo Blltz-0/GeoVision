@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../pages/project_container.dart';
+import '../pages/project_container.dart'; // Updated import to match your file structure
 import '../functions/metadata_handle.dart';
 
 class ProjectList extends StatelessWidget {
@@ -29,12 +29,16 @@ class ProjectList extends StatelessWidget {
     return ListView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.only(bottom: 80), // Padding for FAB
+      padding: const EdgeInsets.only(bottom: 80),
       itemCount: dataList.length,
       itemBuilder: (context, index) {
         final item = dataList[index];
+        // Extract type (default to classification if missing)
+        final String type = item['type'] ?? 'classification';
+
         return _ProjectListItem(
           title: item["title"],
+          type: type, // Pass type to the item
           onReturn: onRefresh,
         );
       },
@@ -44,10 +48,12 @@ class ProjectList extends StatelessWidget {
 
 class _ProjectListItem extends StatelessWidget {
   final String title;
+  final String type; // Added type
   final VoidCallback onReturn;
 
   const _ProjectListItem({
     required this.title,
+    required this.type, // Added type
     required this.onReturn,
   });
 
@@ -68,6 +74,13 @@ class _ProjectListItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // 1. Determine UI elements based on Type
+    final bool isSegmentation = type == 'segmentation';
+
+    final IconData leadingIcon = isSegmentation ? Icons.brush : Icons.grid_view;
+    final Color themeColor = isSegmentation ? Colors.green : Colors.green;
+    final String labelText = isSegmentation ? "SEGMENTATION" : "CLASSIFICATION";
+
     return GestureDetector(
       onTap: () async {
         await Navigator.push(context, MaterialPageRoute(
@@ -103,25 +116,25 @@ class _ProjectListItem extends StatelessWidget {
 
             return Row(
               children: [
-                // 1. Folder Icon
+                // 2. Dynamic Icon & Color
                 Container(
-                  padding: const EdgeInsets.all(10),
+                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.green.withValues(alpha: 0.1),
+                    color: themeColor.withValues(alpha: 0.1),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.folder_rounded, color: Colors.green, size: 32),
+                  child: Icon(leadingIcon, color: themeColor, size: 28),
                 ),
 
                 const SizedBox(width: 16),
 
-                // 2. Project Name Section
+                // 3. Project Name & Type Label
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        "PROJECT",
+                        labelText, // Shows "CLASSIFICATION" or "SEGMENTATION"
                         style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.bold,
@@ -144,7 +157,7 @@ class _ProjectListItem extends StatelessWidget {
                   ),
                 ),
 
-                // 3. Stats Section (Tags & Images)
+                // 4. Stats Section (Tags & Images)
                 Row(
                   children: [
                     // Classes/Tags Column

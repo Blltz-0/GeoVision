@@ -4,28 +4,28 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:path_provider/path_provider.dart';
-
-// Your custom imports
-import 'package:geovision/components/class_selector_dropdown.dart';
-import 'package:geovision/functions/metadata_handle.dart';
+import '../../components/class_selector_dropdown.dart';
 import '../../functions/camera/image_processor.dart';
+import '../../functions/metadata_handle.dart';
 
 class CameraPage extends StatefulWidget {
   final String projectName;
   final List<dynamic> projectClasses;
   final VoidCallback? onClassesUpdated;
   final VoidCallback? onPhotoTaken;
-
-  // --- NEW: Controls if camera should be running ---
   final bool isActive;
+
+  // UPDATED: Receive Project Type
+  final String projectType;
 
   const CameraPage({
     super.key,
     required this.projectName,
     required this.projectClasses,
+    required this.projectType, // UPDATED
     this.onClassesUpdated,
     this.onPhotoTaken,
-    this.isActive = true, // Default to true
+    this.isActive = true,
   });
 
   @override
@@ -42,22 +42,19 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    // Only setup if we start active
     if (widget.isActive) {
       _setupCamera();
     }
   }
 
-  // --- NEW: Detect Tab Switching ---
   @override
   void didUpdateWidget(CameraPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // If the active state changed (User switched tabs)
     if (widget.isActive != oldWidget.isActive) {
       if (widget.isActive) {
-        _setupCamera(); // Tab selected -> Start Camera
+        _setupCamera();
       } else {
-        _stopCamera();  // Tab deselected -> Stop Camera
+        _stopCamera();
       }
     }
   }
@@ -67,7 +64,6 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       final cameras = await availableCameras();
       if (cameras.isEmpty) return;
 
-      // Dispose existing if any to prevent memory leaks before new init
       await _controller?.dispose();
 
       _controller = CameraController(
@@ -77,15 +73,12 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       );
 
       _initializeControllerFuture = _controller!.initialize();
-
-      // Rebuild to show preview
       if (mounted) setState(() {});
     } catch (e) {
       debugPrint("Camera Error: $e");
     }
   }
 
-  // --- NEW: Helper to stop camera ---
   Future<void> _stopCamera() async {
     await _controller?.dispose();
     _controller = null;
@@ -94,7 +87,6 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
 
   Future<void> _takePicture() async {
     final controller = _controller;
-    // Check isActive to ensure we don't snap if user just switched tabs
     if (!widget.isActive || controller == null || !controller.value.isInitialized || _isCapturing) {
       return;
     }
@@ -116,6 +108,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   }
 
   Future<void> _backgroundPipeline(XFile rawImage, String className, Future<Position?> locationFuture) async {
+    // ... [Same implementation as before] ...
     try {
       await compute(cropSquareImage, rawImage.path);
 
@@ -162,6 +155,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   }
 
   Future<Position?> _getCurrentLocation() async {
+    // ... [Same implementation as before] ...
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) return null;
 
@@ -188,10 +182,8 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive) {
-      // App went to background -> Stop camera
       _controller?.dispose();
     } else if (state == AppLifecycleState.resumed) {
-      // App came back -> Start camera ONLY if we are the active tab
       if (widget.isActive) {
         _setupCamera();
       }
@@ -209,7 +201,6 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
           body: FutureBuilder<void>(
             future: _initializeControllerFuture,
             builder: (context, snapshot) {
-              // Only show preview if connection done AND controller is active
               if (snapshot.connectionState == ConnectionState.done && _controller != null) {
                 var cameraRatio = _controller!.value.aspectRatio;
                 if (cameraRatio > 1) cameraRatio = 1 / cameraRatio;
@@ -238,32 +229,34 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                   ],
                 );
               } else {
-                // Show black screen or loader when camera is off
                 return Container(
                     color: Colors.black,
                     child: Center(
                       child: widget.isActive
-                          ? const CircularProgressIndicator() // Loading if active
-                          : const Icon(Icons.camera_alt, color: Colors.grey), // Icon if inactive
+                          ? const CircularProgressIndicator()
+                          : const Icon(Icons.camera_alt, color: Colors.grey),
                     )
                 );
               }
             },
           ),
         ),
-        Positioned(
-          top: 40, left: 0, right: 0,
-          child: ClassSelectorDropdown(
-            projectName: widget.projectName,
-            selectedClass: _activeTag,
-            showAllOption: false,
-            classes: widget.projectClasses,
-            onClassAdded: widget.onClassesUpdated,
-            onClassSelected: (String newClass) {
-              setState(() => _activeTag = newClass);
-            },
+
+        // UPDATED: Hide Dropdown if Segmentation
+        if (widget.projectType == 'classification')
+          Positioned(
+            top: 40, left: 0, right: 0,
+            child: ClassSelectorDropdown(
+              projectName: widget.projectName,
+              selectedClass: _activeTag,
+              showAllOption: false,
+              classes: widget.projectClasses,
+              onClassAdded: widget.onClassesUpdated,
+              onClassSelected: (String newClass) {
+                setState(() => _activeTag = newClass);
+              },
+            ),
           ),
-        ),
       ],
     );
   }

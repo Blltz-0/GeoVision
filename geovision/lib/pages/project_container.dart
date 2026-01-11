@@ -10,6 +10,7 @@ import 'package:geovision/pages/project_tabs/map.dart';
 import '../functions/export_service.dart';
 import '../functions/metadata_handle.dart';
 import 'manage_labels_page.dart';
+import 'annotation_page.dart';
 
 class ProjectContainerPage extends StatefulWidget {
   final String projectName;
@@ -24,39 +25,79 @@ class ProjectContainerPage extends StatefulWidget {
 }
 
 class _ProjectContainerPageState extends State<ProjectContainerPage> {
-  // --- HOISTED STATE ---
   List<File> _projectImages = [];
   Map<String, String> _labelMap = {};
   List<Map<String, dynamic>> _csvData = [];
   List<Map<String, dynamic>> _projectClasses = [];
   bool _isLoadingImages = true;
 
-  // --- UI STATE ---
+  String _projectType = 'classification';
+
   int _currentIndex = 1;
   bool _isExporting = false;
 
-  // --- LAZY LOADING STATE ---
-  // Initialize with [false, true, false] because _currentIndex is 1 (Gallery).
-  // This means Camera (0) and Map (2) won't load until clicked.
   final List<bool> _visitedIndices = [false, true, false, false];
 
   @override
   void initState() {
     super.initState();
+    // 1. UPDATE TIMESTAMP IMMEDIATELY ON LOAD
+    _updateLastOpened();
+
+    _loadProjectType();
     _loadClasses();
     _synchronizeData();
   }
 
-  // --- NEW: Handle Tab Taps for Lazy Loading ---
+  // --- NEW METHOD: FORCE UPDATE LAST OPENED ---
+  Future<void> _updateLastOpened() async {
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+      final projectPath = '${docDir.path}/projects/${widget.projectName}';
+      final projectDir = Directory(projectPath);
+      final file = File('$projectPath/last_opened.txt');
+
+      if (await projectDir.exists()) {
+        // Force create file if missing
+        if (!await file.exists()) {
+          await file.create(recursive: true);
+        }
+        // Write current time
+        await file.writeAsString(DateTime.now().toIso8601String(), flush: true);
+        debugPrint("✅ Updated last_opened for ${widget.projectName}");
+      }
+    } catch (e) {
+      debugPrint("❌ Error updating last_opened: $e");
+    }
+  }
+
+  Future<void> _loadProjectType() async {
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+      final typeFile = File('${docDir.path}/projects/${widget.projectName}/project_type.txt');
+
+      if (await typeFile.exists()) {
+        final content = await typeFile.readAsString();
+        setState(() {
+          _projectType = content.trim();
+        });
+      } else {
+        setState(() {
+          _projectType = 'classification';
+        });
+      }
+    } catch (e) {
+      debugPrint("Error loading project type: $e");
+    }
+  }
+
   void _onTabTapped(int index) {
     setState(() {
       _currentIndex = index;
-      // Mark this tab as visited so it builds and stays in memory
       _visitedIndices[index] = true;
     });
   }
 
-  // --- DATA SYNCHRONIZATION ---
   Future<void> _synchronizeData() async {
     if (!mounted) return;
 
@@ -69,7 +110,6 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
         await imagesDir.create(recursive: true);
       }
 
-      // 1. GET FILES FROM DISK
       final List<FileSystemEntity> entities = await imagesDir.list().toList();
       final List<File> filesOnDisk = entities
           .whereType<File>()
@@ -81,7 +121,6 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
 
       filesOnDisk.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
 
-      // 2. READ CSV DATA
       List<Map<String, dynamic>> rawCsvData = await MetadataService.readCsvData(widget.projectName);
 
       Map<String, Map<String, dynamic>> csvMap = {};
@@ -93,7 +132,6 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
         }
       }
 
-      // 3. MERGE
       List<Map<String, dynamic>> cleanDataList = [];
       Map<String, String> newLabelMap = {};
 
@@ -206,12 +244,21 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
         builder: (context) => ManageClassesPage(projectName: widget.projectName),
       ),
     );
-
     if (mounted) {
       await _loadClasses();
       await _synchronizeData();
       setState(() {});
     }
+  }
+
+  void _openManageLabels() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ManageLabelsPage(projectName: widget.projectName),
+      ),
+    );
+    if (mounted) setState(() {});
   }
 
   void _renameProject() {
@@ -362,23 +409,20 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
     );
   }
 
-  void _openManageLabels() async {
-    await Navigator.push(
+  void _openAnnotationPage(String imagePath) {
+    Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (context) => ManageLabelsPage(projectName: widget.projectName),
+        builder: (context) => AnnotationPage(
+          imagePath: imagePath,
+          projectName: widget.projectName,
+        ),
       ),
     );
-    // Reload data if labels affect global state
-    if (mounted) setState(() {});
   }
 
   @override
   Widget build(BuildContext context) {
-    // We use Lazy Loading here.
-    // Instead of initializing all pages at once, we check `_visitedIndices`.
-    // If a tab hasn't been visited, we return an empty SizedBox().
-
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (bool didPop, dynamic result) async {
@@ -420,7 +464,6 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
           ),
           title: Text(widget.projectName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
           actions: [
-            // Export button remains
             _isExporting
                 ? const Padding(padding: EdgeInsets.all(12.0), child: CircularProgressIndicator())
                 : IconButton(
@@ -432,12 +475,12 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
         body: IndexedStack(
           index: _currentIndex,
           children: [
-            // Tab 0: Camera
             _visitedIndices[0]
                 ? CameraPage(
               projectName: widget.projectName,
               projectClasses: _projectClasses,
               isActive: _currentIndex == 0,
+              projectType: _projectType,
               onClassesUpdated: () async {
                 await _loadClasses();
                 setState(() {});
@@ -446,7 +489,6 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
             )
                 : const SizedBox(),
 
-            // Tab 1: Gallery
             _visitedIndices[1]
                 ? ImagesPage(
               projectName: widget.projectName,
@@ -454,6 +496,8 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
               labelMap: _labelMap,
               projectClasses: _projectClasses,
               isLoading: _isLoadingImages,
+              projectType: _projectType,
+              onAnnotate: _openAnnotationPage,
               onDataChanged: _synchronizeData,
               onClassesUpdated: () async {
                 await _loadClasses();
@@ -462,12 +506,12 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
             )
                 : const SizedBox(),
 
-            // Tab 2: Map
             _visitedIndices[2]
                 ? MapPage(
               projectName: widget.projectName,
               mapData: _csvData,
               projectClasses: _projectClasses,
+              projectType: _projectType,
               onClassesUpdated: () async {
                 await _loadClasses();
                 setState(() {});
@@ -475,11 +519,10 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
             )
                 : const SizedBox(),
 
-            // Tab 3: Settings (UPDATED)
             _visitedIndices[3]
                 ? ProjectSettings(
               projectName: widget.projectName,
-              // Pass the functions from the parent to the child
+              projectType: _projectType,
               onManageClasses: _openManageClasses,
               onManageLabels: _openManageLabels,
               onRenameProject: _renameProject,
