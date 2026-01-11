@@ -44,6 +44,7 @@ class ImagesPage extends StatefulWidget {
 }
 
 class _ImagesPageState extends State<ImagesPage> {
+  final Set<String> _collapsedClasses = {};
   String _filterClass = "All";
   bool _isImporting = false;
   bool _groupByClass = false;
@@ -150,6 +151,7 @@ class _ImagesPageState extends State<ImagesPage> {
   }
 
   List<Widget> _buildGroupedSlivers(List<File> imagesToDisplay) {
+    // 1. Get unique classes
     final Set<String> uniqueClasses = imagesToDisplay.map((file) {
       final filename = file.path.split(Platform.pathSeparator).last;
       return widget.labelMap[filename] ?? "Unclassified";
@@ -160,18 +162,21 @@ class _ImagesPageState extends State<ImagesPage> {
     List<Widget> slivers = [];
 
     for (var className in sortedClasses) {
+      // 2. Filter images
       final classImages = imagesToDisplay.where((file) {
         final filename = file.path.split(Platform.pathSeparator).last;
         final label = widget.labelMap[filename] ?? "Unclassified";
         return label == className;
       }).toList();
 
+      // 3. Get Color
       final classDef = widget.projectClasses.firstWhere(
-              (c) => c['name'] == className,
-          orElse: () => {'color': Colors.grey.toARGB32()}
+            (c) => c['name'] == className,
+        orElse: () => {'color': Colors.grey.toARGB32()},
       );
       Color headerColor = Color(classDef['color']);
 
+      // 4. Prepare Grid Data
       final gridData = classImages.map((file) {
         final filename = file.path.split(Platform.pathSeparator).last;
         return {
@@ -180,33 +185,62 @@ class _ImagesPageState extends State<ImagesPage> {
         };
       }).toList();
 
+      // 5. Check if Expanded
+      // If it is NOT in the collapsed set, it is expanded.
+      final bool isExpanded = !_collapsedClasses.contains(className);
+
+      // --- PART A: THE CLICKABLE HEADER ---
       slivers.add(
-          SliverToBoxAdapter(
+        SliverToBoxAdapter(
+          child: InkWell(
+            onTap: () {
+              setState(() {
+                if (isExpanded) {
+                  _collapsedClasses.add(className);
+                } else {
+                  _collapsedClasses.remove(className);
+                }
+              });
+            },
             child: Container(
-              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
               margin: const EdgeInsets.only(top: 15, bottom: 5, left: 10, right: 10),
               decoration: BoxDecoration(
-                  border: Border(bottom: BorderSide(color: headerColor, width: 2))
+                border: Border(
+                  bottom: BorderSide(color: headerColor, width: 2),
+                ),
               ),
               child: Row(
                 children: [
                   CircleAvatar(radius: 6, backgroundColor: headerColor),
                   const SizedBox(width: 8),
-                  Text(
-                    "$className (${classImages.length})",
-                    style: const TextStyle(
+                  Expanded(
+                    child: Text(
+                      "$className (${classImages.length})",
+                      style: const TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
-                        color: Colors.black87
+                        color: Colors.black87,
+                      ),
                     ),
+                  ),
+                  // The Chevron Icon that rotates based on state
+                  Icon(
+                    isExpanded ? Icons.expand_less : Icons.expand_more,
+                    color: Colors.grey,
                   ),
                 ],
               ),
             ),
-          )
+          ),
+        ),
       );
 
-      slivers.add(
+      // --- PART B: THE LAZY GRID ---
+      // We only add the SliverGrid to the array if the group is expanded.
+      // Since it's a SliverGrid, it retains pure lazy loading behavior.
+      if (isExpanded) {
+        slivers.add(
           SliverPadding(
             padding: const EdgeInsets.symmetric(horizontal: 10),
             sliver: SliverImageGrid(
@@ -214,14 +248,14 @@ class _ImagesPageState extends State<ImagesPage> {
               dataList: gridData,
               projectName: widget.projectName,
               onBack: () => widget.onDataChanged?.call(),
-              projectClasses: widget.projectClasses,
-              projectType: widget.projectType,
-              onAnnotate: widget.onAnnotate, // 3. Pass it down
+              projectClasses: widget.projectClasses, projectType: widget.projectType,onAnnotate: widget.onAnnotate,
             ),
-          )
-      );
+          ),
+        );
+      }
     }
 
+    // Bottom padding
     slivers.add(const SliverToBoxAdapter(child: SizedBox(height: 80)));
 
     return slivers;

@@ -4,15 +4,95 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_map_heatmap/flutter_map_heatmap.dart';
+import 'package:geocoding/geocoding.dart'; // Required for address resolution
+
 import '../../components/class_selector_dropdown.dart';
 
+// --- HELPER WIDGET: DISPLAYS ADDRESS OR LAT/LNG ---
+class LocationDisplay extends StatefulWidget {
+  final double latitude;
+  final double longitude;
+  final TextStyle style;
+
+  const LocationDisplay({
+    super.key,
+    required this.latitude,
+    required this.longitude,
+    required this.style,
+  });
+
+  @override
+  State<LocationDisplay> createState() => _LocationDisplayState();
+}
+
+class _LocationDisplayState extends State<LocationDisplay> {
+  String _displayText = "Loading address...";
+
+  @override
+  void initState() {
+    super.initState();
+    _resolveAddress();
+  }
+
+  @override
+  void didUpdateWidget(LocationDisplay oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.latitude != oldWidget.latitude || widget.longitude != oldWidget.longitude) {
+      _resolveAddress();
+    }
+  }
+
+  Future<void> _resolveAddress() async {
+    if (widget.latitude == 0.0 && widget.longitude == 0.0) {
+      if (mounted) setState(() => _displayText = "No GPS Data");
+      return;
+    }
+
+    // Default to Lat/Lng while loading or on error
+    String latLngString = "${widget.latitude.toStringAsFixed(5)}, ${widget.longitude.toStringAsFixed(5)}";
+    if (mounted) setState(() => _displayText = latLngString);
+
+    try {
+      List<Placemark> placemarks = await placemarkFromCoordinates(widget.latitude, widget.longitude);
+
+      if (placemarks.isNotEmpty && mounted) {
+        Placemark place = placemarks[0];
+        String part1 = place.locality ?? "";
+        String part2 = place.administrativeArea ?? "";
+        String part3 = place.country ?? "";
+
+        String finalName = "";
+        if (part1.isNotEmpty && part2.isNotEmpty) finalName = "$part1, $part2";
+        else if (part1.isNotEmpty) finalName = "$part1, $part3";
+        else if (part2.isNotEmpty) finalName = "$part2, $part3";
+        else finalName = part3;
+
+        if (finalName.trim().isEmpty || finalName.trim() == ",") finalName = "Unknown Location";
+
+        setState(() => _displayText = finalName);
+      }
+    } catch (e) {
+      // Keep showing Lat/Lng on error
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      _displayText,
+      style: widget.style,
+      overflow: TextOverflow.ellipsis,
+      maxLines: 2,
+    );
+  }
+}
+
+// --- MAIN MAP PAGE ---
 class MapPage extends StatefulWidget {
   final String projectName;
   final List<Map<String, dynamic>> mapData;
   final List<dynamic> projectClasses;
   final VoidCallback? onClassesUpdated;
-
-  // UPDATED: Receive Project Type
   final String projectType;
 
   const MapPage({
@@ -20,7 +100,7 @@ class MapPage extends StatefulWidget {
     required this.projectName,
     required this.mapData,
     required this.projectClasses,
-    required this.projectType, // UPDATED
+    required this.projectType,
     this.onClassesUpdated,
   });
 
@@ -63,7 +143,7 @@ class _MapPageState extends State<MapPage> {
     for (var point in widget.mapData) {
       double lat = point['lat'] ?? 0.0;
       double lng = point['lng'] ?? 0.0;
-      String imagePath = point['path'] ?? "";
+      // String imagePath = point['path'] ?? ""; // Not needed here anymore, passed in object
       String pointClass = point['class'] ?? "Unclassified";
       String timeStr = point['time'] ?? "";
 
@@ -85,7 +165,6 @@ class _MapPageState extends State<MapPage> {
       }
 
       // 2. CLASS FILTER (Only apply if not All)
-      // Even if dropdown is hidden, _filterClass defaults to All, so this is safe.
       if (_filterClass != "All" && pointClass != _filterClass) {
         continue;
       }
@@ -97,7 +176,8 @@ class _MapPageState extends State<MapPage> {
           width: 40,
           height: 40,
           child: GestureDetector(
-            onTap: () => _showImageDialog(imagePath),
+            // UPDATED: Pass the entire point object to the dialog
+            onTap: () => _showImageDialog(point),
             child: const Icon(Icons.location_on, color: Colors.red, size: 40),
           ),
         ),
@@ -115,7 +195,6 @@ class _MapPageState extends State<MapPage> {
   }
 
   Future<void> _getCurrentLocation() async {
-    // ... [Same implementation as before] ...
     bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!serviceEnabled) return;
 
@@ -138,24 +217,97 @@ class _MapPageState extends State<MapPage> {
     }
   }
 
-  void _showImageDialog(String path) {
+  // --- UPDATED DIALOG: SHOWS DETAILS ---
+  void _showImageDialog(Map<String, dynamic> pointData) {
+    String path = pointData['path'] ?? "";
+    String className = pointData['class'] ?? "Unclassified";
+    double lat = pointData['lat'] ?? 0.0;
+    double lng = pointData['lng'] ?? 0.0;
+    String filename = path.split(Platform.pathSeparator).last;
+
+    // Parse Date
+    String dateString = "Unknown Date";
+    if (pointData['time'] != null) {
+      try {
+        final dt = DateTime.parse(pointData['time']);
+        dateString = "${dt.year}-${dt.month}-${dt.day} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}";
+      } catch (_) {}
+    }
+
     showDialog(
       context: context,
       builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (File(path).existsSync())
-              Image.file(File(path), height: 300, fit: BoxFit.contain)
-            else
-              const Padding(
-                padding: EdgeInsets.all(20.0),
-                child: Text("Image file not found on device"),
+            // 1. IMAGE AREA
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
+              child: Container(
+                height: 250,
+                color: Colors.black12,
+                child: File(path).existsSync()
+                    ? Image.file(File(path), fit: BoxFit.cover)
+                    : const Center(child: Icon(Icons.broken_image, color: Colors.grey)),
               ),
+            ),
+
+            // 2. INFO AREA
+            Padding(
+              padding: const EdgeInsets.all(15.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(filename, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  const SizedBox(height: 10),
+
+                  // Class Row
+                  Row(
+                    children: [
+                      const Icon(Icons.label, size: 16, color: Colors.blue),
+                      const SizedBox(width: 8),
+                      Text("Class: $className", style: const TextStyle(fontSize: 14)),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+
+                  // Date Row
+                  Row(
+                    children: [
+                      const Icon(Icons.calendar_today, size: 16, color: Colors.blue),
+                      const SizedBox(width: 8),
+                      Text(dateString, style: const TextStyle(fontSize: 14)),
+                    ],
+                  ),
+                  const SizedBox(height: 5),
+
+                  // Location Row (Using the Helper Widget)
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Icon(Icons.location_on, size: 16, color: Colors.red),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: LocationDisplay(
+                            latitude: lat,
+                            longitude: lng,
+                            style: const TextStyle(fontSize: 14)
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            // 3. CLOSE BUTTON
             TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text("Close"),
-            )
+            ),
+            const SizedBox(height: 5),
           ],
         ),
       ),
@@ -183,7 +335,7 @@ class _MapPageState extends State<MapPage> {
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(30),
-          boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))],
+          boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))],
         ),
         padding: const EdgeInsets.symmetric(horizontal: 15),
         child: Column(
@@ -265,7 +417,7 @@ class _MapPageState extends State<MapPage> {
             ),
           ),
 
-          // --- UPDATED: CLASS SELECTOR DROPDOWN (ONLY FOR CLASSIFICATION) ---
+          // --- CLASS SELECTOR DROPDOWN (ONLY FOR CLASSIFICATION) ---
           if (widget.projectType == 'classification')
             Positioned(
               top: 80, left: 0, right: 0,
