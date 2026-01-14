@@ -49,11 +49,11 @@ class AboutPage extends StatelessWidget {
             const SizedBox(height: 20),
 
             // Developer / Contact Info
-            _buildInfoRow(Icons.code, 'Developer', 'Lawrence C. Reolegio',),
+            _buildInfoRow(Icons.code, 'Developer/s', ['Lawrence C. Reolegio'],),
             const SizedBox(height: 10),
-            _buildInfoRow(Icons.email, 'Contact', 'reolegio.l@gmail.com'),
+            _buildInfoRow(Icons.email, 'Contact', ['reolegio.l@gmail.com']),
             const SizedBox(height: 10),
-            _buildInfoRow(Icons.copyright, 'License', 'MIT License'),
+            _buildInfoRow(Icons.copyright, 'License', ['MIT License']),
 
             const SizedBox(height: 40),
             const Text(
@@ -66,16 +66,19 @@ class AboutPage extends StatelessWidget {
     );
   }
 
-  Widget _buildInfoRow(IconData icon, String label, String value) {
+  Widget _buildInfoRow(IconData icon, String label, List<String> value) {
     return Row(
       children: [
         Icon(icon, color: Colors.green),
         const SizedBox(width: 15),
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.start,
           children: [
             Text(label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-            Text(value, style: const TextStyle(color: Colors.black87, fontSize: 16)),
+            //make a loop to iterate through the list value and show them each
+            for (var value in value)
+              Text(value, style: const TextStyle(fontSize: 16)),
           ],
         ),
       ],

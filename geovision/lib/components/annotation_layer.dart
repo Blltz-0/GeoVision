@@ -32,7 +32,7 @@ class DrawingStroke {
   Map<String, dynamic> toJson() {
     return {
       'p': points.map((e) => [e.dx, e.dy]).toList(),
-      'c': color.value,
+      'c': color.toARGB32(),
       'w': width,
       'e': isEraser,
     };

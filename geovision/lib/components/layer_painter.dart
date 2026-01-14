@@ -1,42 +1,61 @@
 import 'package:flutter/material.dart';
-import 'annotation_layer.dart'; // Adjust import path if needed
+import 'annotation_layer.dart';
 
 class LayerPainter extends CustomPainter {
   final List<DrawingStroke> strokes;
   final DrawingStroke? currentStroke;
   final Offset? cursorPosition;
+  final Size? imageSize; // <--- NEW: We need the original image dimensions
 
   LayerPainter({
     required this.strokes,
     this.currentStroke,
     this.cursorPosition,
+    this.imageSize, // <--- Add to constructor
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.saveLayer(Rect.fromLTWH(0, 0, size.width, size.height), Paint());
+    canvas.save();
 
+    // --- THE FIX: SCALING ---
+    // If we know the original image size, we scale the canvas
+    // to match the current display size.
+    // Example: Image is 1000px, Screen is 500px -> Scale = 0.5
+    double scale = 1.0;
+    if (imageSize != null) {
+      scale = size.width / imageSize!.width;
+      canvas.scale(scale);
+    }
+
+    // Draw saved strokes
     for (final stroke in strokes) {
       _drawStroke(canvas, stroke);
     }
 
+    // Draw current live stroke
     if (currentStroke != null) {
       _drawStroke(canvas, currentStroke!);
     }
 
-    canvas.restore();
+    canvas.restore(); // Restore before drawing cursor (cursor is usually screen-space)
 
-    // Draw Cursor
+    // Draw Cursor (Optional: keep this in screen space or scale it too)
     if (cursorPosition != null && currentStroke != null) {
+      // For the cursor, we want it to follow the finger visually
+      // We calculate the visual position manually since we popped the canvas.save()
+      final visualPos = cursorPosition! * scale;
+      final visualRadius = (currentStroke!.width * scale) / 2;
+
       final cursorPaint = Paint()
         ..style = PaintingStyle.stroke
-        ..color = Colors.black.withOpacity(0.5)
+        ..color = Colors.black.withValues(alpha:0.5)
         ..strokeWidth = 1.0;
 
-      canvas.drawCircle(cursorPosition!, currentStroke!.width / 2, cursorPaint);
+      canvas.drawCircle(visualPos, visualRadius, cursorPaint);
 
-      cursorPaint.color = Colors.white.withOpacity(0.5);
-      canvas.drawCircle(cursorPosition!, (currentStroke!.width / 2) - 1.0, cursorPaint);
+      cursorPaint.color = Colors.white.withValues(alpha:0.5);
+      canvas.drawCircle(visualPos, visualRadius - 1.0, cursorPaint);
     }
   }
 

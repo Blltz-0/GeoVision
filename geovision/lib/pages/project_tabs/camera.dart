@@ -123,6 +123,10 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       await tempFile.copy(finalPath);
       await tempFile.delete();
 
+      await FileImage(File(finalPath)).evict();
+
+      await ResizeImage(FileImage(File(finalPath)), width: 300).evict();
+
       final Position? position = await locationFuture;
 
       await MetadataService.embedMetadata(

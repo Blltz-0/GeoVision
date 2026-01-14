@@ -476,6 +476,9 @@ class _ImageViewState extends State<ImageView> {
                       await FileImage(File(currentPath)).evict();
                       await FileImage(File(newPath)).evict();
 
+                      await ResizeImage(FileImage(File(currentPath)), width: 300).evict();
+                      await ResizeImage(FileImage(File(newPath)), width: 300).evict();
+
                       setState(() {
                         _currentImagePaths[_currentIndex] = newPath;
                         _hasChanges = true;

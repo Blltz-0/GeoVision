@@ -62,10 +62,11 @@ class _LocationDisplayState extends State<LocationDisplay> {
         String part3 = place.country ?? "";
 
         String finalName = "";
-        if (part1.isNotEmpty && part2.isNotEmpty) finalName = "$part1, $part2";
-        else if (part1.isNotEmpty) finalName = "$part1, $part3";
-        else if (part2.isNotEmpty) finalName = "$part2, $part3";
-        else finalName = part3;
+        if (part1.isNotEmpty && part2.isNotEmpty) {
+          finalName = "$part1, $part2";
+        } else if (part1.isNotEmpty) {finalName = "$part1, $part3";}
+        else if (part2.isNotEmpty) {finalName = "$part2, $part3";}
+        else {finalName = part3;}
 
         if (finalName.trim().isEmpty || finalName.trim() == ",") finalName = "Unknown Location";
 

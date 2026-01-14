@@ -121,7 +121,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                   const SizedBox(height: 20),
                   DropdownButtonFormField<String>(
-                    value: selectedType,
+                    initialValue: selectedType,
                     decoration: const InputDecoration(labelText: "Project Mode", border: OutlineInputBorder()),
                     items: const [
                       DropdownMenuItem(value: 'classification', child: Text("Image Classification")),

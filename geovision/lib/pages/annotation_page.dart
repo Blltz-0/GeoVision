@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
@@ -92,6 +91,34 @@ class _AnnotationPageState extends State<AnnotationPage> {
     super.dispose();
   }
 
+  // --- HELPERS: COORDINATE CONVERSION (THE FIX) ---
+
+  // Converts a screen touch (e.g. 200, 200) to an image coordinate (e.g. 2000, 2000)
+  Offset _toImageCoordinates(Offset localPosition) {
+    if (_imageSize == null || _imageKey.currentContext == null) return localPosition;
+
+    final RenderBox? box = _imageKey.currentContext!.findRenderObject() as RenderBox?;
+    if (box == null) return localPosition;
+
+    final double scaleX = _imageSize!.width / box.size.width;
+    final double scaleY = _imageSize!.height / box.size.height;
+
+    return Offset(
+      localPosition.dx * scaleX,
+      localPosition.dy * scaleY,
+    );
+  }
+
+  // Scale brush size so it matches image resolution
+  double _getScaledStrokeWidth() {
+    if (_imageSize == null || _imageKey.currentContext == null) return _strokeWidth;
+    final RenderBox? box = _imageKey.currentContext!.findRenderObject() as RenderBox?;
+    if (box == null) return _strokeWidth;
+
+    final double scale = _imageSize!.width / box.size.width;
+    return _strokeWidth * scale;
+  }
+
   // --- FEEDBACK POPUP ---
   void _showFeedback(String message) {
     if (!mounted) return;
@@ -144,7 +171,10 @@ class _AnnotationPageState extends State<AnnotationPage> {
         final File file = File(p.join(dir.path, fileName));
 
         final recorder = ui.PictureRecorder();
+        // Canvas is full image size
         final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, _imageSize!.width, _imageSize!.height));
+
+        // Painter draws in image coordinates (no scaling needed for save, so passed scale is implicitly 1.0)
         final painter = LayerPainter(strokes: layer.strokes);
         painter.paint(canvas, _imageSize!);
 
@@ -230,7 +260,6 @@ class _AnnotationPageState extends State<AnnotationPage> {
     });
   }
 
-  // --- NEW: DELETE CONFIRMATION ---
   void _confirmDeleteLayer(int index, StateSetter setModalState) {
     showDialog(
       context: context,
@@ -249,9 +278,9 @@ class _AnnotationPageState extends State<AnnotationPage> {
           ),
           TextButton(
             onPressed: () {
-              Navigator.of(context).pop(); // Close dialog
-              _deleteLayer(index); // Perform delete
-              setModalState(() {}); // Refresh modal
+              Navigator.of(context).pop();
+              _deleteLayer(index);
+              setModalState(() {});
             },
             child: const Text("Delete", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
           ),
@@ -298,6 +327,7 @@ class _AnnotationPageState extends State<AnnotationPage> {
       layer.labelName = name;
       layer.labelColor = colorInt;
 
+      // Update color but preserve eraser
       layer.strokes = layer.strokes.map((stroke) {
         if (stroke.isEraser) return stroke;
         return stroke.copyWith(color: newColor);
@@ -362,6 +392,8 @@ class _AnnotationPageState extends State<AnnotationPage> {
     canvas.scale(scale, scale);
     canvas.translate(-contentBounds.left, -contentBounds.top);
 
+    // Note: We do NOT pass imageSize here, because we manually calculated the scale above
+    // to fit the strokes into 100x100.
     final painter = LayerPainter(strokes: layer.strokes);
     painter.paint(canvas, Size.infinite);
 
@@ -400,13 +432,17 @@ class _AnnotationPageState extends State<AnnotationPage> {
     return local;
   }
 
+  // --- UPDATED SCALE LOGIC (CONVERTS TO IMAGE COORDS) ---
   void _onScaleStart(ScaleStartDetails details) {
     _activePointerCount = details.pointerCount;
     if (_activePointerCount == 1) {
       if (!_layers[_activeLayerIndex].isVisible) return;
-      final validPoint = _getLocalValidPoint(details.focalPoint);
-      if (validPoint != null) {
-        setState(() => _currentStrokePoints = [validPoint]);
+
+      final validLocalPoint = _getLocalValidPoint(details.focalPoint);
+      if (validLocalPoint != null) {
+        // Convert screen point to image point immediately
+        final imagePoint = _toImageCoordinates(validLocalPoint);
+        setState(() => _currentStrokePoints = [imagePoint]);
       }
     } else {
       _anchorMatrix = _matrixNotifier.value.clone();
@@ -432,9 +468,12 @@ class _AnnotationPageState extends State<AnnotationPage> {
 
     if (_activePointerCount == 1) {
       if (!_layers[_activeLayerIndex].isVisible) return;
-      final validPoint = _getLocalValidPoint(details.focalPoint);
-      if (validPoint != null) {
-        setState(() => _currentStrokePoints.add(validPoint));
+
+      final validLocalPoint = _getLocalValidPoint(details.focalPoint);
+      if (validLocalPoint != null) {
+        // Convert to Image Coords
+        final imagePoint = _toImageCoordinates(validLocalPoint);
+        setState(() => _currentStrokePoints.add(imagePoint));
       }
     } else {
       final double scaleDelta = details.scale / _anchorScale;
@@ -456,10 +495,14 @@ class _AnnotationPageState extends State<AnnotationPage> {
   void _onScaleEnd(ScaleEndDetails details) async {
     if (_currentStrokePoints.isNotEmpty && _activePointerCount == 1) {
       if (!_layers[_activeLayerIndex].isVisible) return;
+
       final newStroke = DrawingStroke(
         points: List.from(_currentStrokePoints),
         color: _getActiveLayerColor(),
-        width: _strokeWidth,
+
+        // Use Scaled Width
+        width: _getScaledStrokeWidth(),
+
         isEraser: _currentTool == DrawingTool.eraser,
       );
       setState(() {
@@ -493,8 +536,6 @@ class _AnnotationPageState extends State<AnnotationPage> {
     _showFeedback("Redo");
     await _generateThumbnail(_activeLayerIndex);
   }
-
-  // --- UI ---
 
   @override
   Widget build(BuildContext context) {
@@ -573,9 +614,10 @@ class _AnnotationPageState extends State<AnnotationPage> {
                                   liveStroke = DrawingStroke(
                                     points: _currentStrokePoints,
                                     color: _getActiveLayerColor(),
-                                    width: _strokeWidth,
+                                    width: _getScaledStrokeWidth(), // Use scaled width for live stroke too
                                     isEraser: _currentTool == DrawingTool.eraser,
                                   );
+                                  // Cursor is still in Image Coordinates, painter will scale it
                                   cursorPosition = _currentStrokePoints.last;
                                 }
 
@@ -588,6 +630,7 @@ class _AnnotationPageState extends State<AnnotationPage> {
                                           strokes: layer.strokes,
                                           currentStroke: liveStroke,
                                           cursorPosition: cursorPosition,
+                                          imageSize: _imageSize, // Pass original image size!
                                         ),
                                       ),
                                     ),
@@ -610,7 +653,7 @@ class _AnnotationPageState extends State<AnnotationPage> {
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.7),
+                    color: Colors.black.withValues(alpha:0.7),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
                         color: hasLabel ? Color(activeLayerData!.labelColor!) : Colors.grey,
@@ -770,7 +813,7 @@ class _AnnotationPageState extends State<AnnotationPage> {
                                   borderRadius: BorderRadius.circular(8),
                                   border: isActive
                                       ? Border.all(color: Colors.blueAccent, width: 2)
-                                      : Border.all(color: Colors.grey.withOpacity(0.3)),
+                                      : Border.all(color: Colors.grey.withValues(alpha:0.3)),
                                 ),
                                 child: Row(
                                   children: [
@@ -842,7 +885,6 @@ class _AnnotationPageState extends State<AnnotationPage> {
                                         if (value == 'clear') {
                                           _clearLayer(index);
                                         } else if (value == 'delete') {
-                                          // Call confirmation dialog
                                           _confirmDeleteLayer(index, setModalState);
                                         }
                                         setModalState(() {});

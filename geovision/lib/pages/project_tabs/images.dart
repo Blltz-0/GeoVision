@@ -135,6 +135,9 @@ class _ImagesPageState extends State<ImagesPage> {
 
     await File(file.path).copy(newPath);
 
+    await FileImage(File(newPath)).evict();
+    await ResizeImage(FileImage(File(newPath)), width: 300).evict();
+
     await MetadataService.embedMetadata(
       filePath: newPath,
       lat: importedPosition?.latitude ?? 0.0,

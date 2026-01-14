@@ -84,6 +84,7 @@ class SliverImageGrid extends StatelessWidget {
                     tag: imagePath,
                     child: Image.file(
                       File(imagePath),
+                      key: ValueKey(File(imagePath).lastModifiedSync().millisecondsSinceEpoch),
                       fit: BoxFit.cover,
                       cacheWidth: 300,
                       errorBuilder: (ctx, err, stack) => const Center(

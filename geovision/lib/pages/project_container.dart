@@ -46,7 +46,9 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
 
     _loadProjectType();
     _loadClasses();
-    _synchronizeData();
+
+    _loadDataOnly(); //!!!!Better Option for Release Version!!!!!!!!!!!
+    //_synchronizeData(); !!!!Only Used when Manually Adding Images to Project Folder!!!!!!!!!!!
   }
 
   // --- NEW METHOD: FORCE UPDATE LAST OPENED ---
@@ -96,6 +98,72 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
       _currentIndex = index;
       _visitedIndices[index] = true;
     });
+  }
+
+  Future<void> _loadDataOnly() async {
+    if (!mounted) return;
+    setState(() => _isLoadingImages = true);
+
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+      final projectPath = '${docDir.path}/projects/${widget.projectName}';
+      final imagesDir = Directory('$projectPath/images');
+
+      // 1. Load Images from Disk (For Gallery Display)
+      if (!await imagesDir.exists()) {
+        await imagesDir.create(recursive: true);
+      }
+
+      final List<FileSystemEntity> entities = await imagesDir.list().toList();
+      final List<File> filesOnDisk = entities
+          .whereType<File>()
+          .where((f) {
+        final ext = f.path.split('.').last.toLowerCase();
+        return ext == 'jpg' || ext == 'png' || ext == 'jpeg';
+      })
+          .toList();
+
+      // Sort by date (newest first)
+      filesOnDisk.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+
+      // 2. Load CSV Data (For Labels/Coordinates)
+      List<Map<String, dynamic>> rawCsvData = await MetadataService.readCsvData(widget.projectName);
+
+      // 3. Map CSV data to filename for quick lookup
+      Map<String, Map<String, dynamic>> csvMap = {};
+      for (var row in rawCsvData) {
+        String rawPath = row['path'] ?? '';
+        String filename = rawPath.split(Platform.pathSeparator).last;
+        if (filename.isNotEmpty) {
+          csvMap[filename] = row;
+        }
+      }
+
+      // 4. Build the Label Map for the UI
+      Map<String, String> newLabelMap = {};
+      for (File file in filesOnDisk) {
+        String filename = file.path.split(Platform.pathSeparator).last;
+        if (csvMap.containsKey(filename)) {
+          newLabelMap[filename] = csvMap[filename]!['class'] ?? 'Unclassified';
+        } else {
+          // If file exists on disk but not in CSV, show as Unclassified visually
+          // But DO NOT write to CSV yet.
+          newLabelMap[filename] = 'Unclassified';
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _projectImages = filesOnDisk;
+          _csvData = rawCsvData;
+          _labelMap = newLabelMap;
+          _isLoadingImages = false;
+        });
+      }
+    } catch (e) {
+      debugPrint("❌ Load Error: $e");
+      if (mounted) setState(() => _isLoadingImages = false);
+    }
   }
 
   Future<void> _synchronizeData() async {
