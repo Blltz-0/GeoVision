@@ -1,5 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:archive/archive_io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -171,7 +173,7 @@ class ExportService {
           "description": projectName,
           "year": DateTime.now().year,
           "version": "1.0",
-          "contributor": "VisioAtlas User",
+          "contributor": "GeoVisionTagger",
           "date_created": DateTime.now().toIso8601String()
         },
         "licenses": [{"id": 1, "name": "Proprietary", "url": ""}],
@@ -201,7 +203,6 @@ class ExportService {
           if (mapImg != null) {
             final mapPath = '${sourceDir.path}/map_overview_${i + 1}.png';
 
-            // Encode PNG in background to avoid UI freeze
             final pngBytes = await compute(_encodePngInBackground, mapImg);
 
             final mapFile = File(mapPath);
@@ -259,6 +260,26 @@ void _zipInBackground(List<String> paths) {
         // Skip hidden files
         if (fileName.startsWith('.')) continue;
 
+        // --- FILTERING (EXCLUDE FILES) ---
+        String lowerName = fileName.toLowerCase();
+
+        // 1. Skip system files
+        if (lowerName == 'last_opened.txt' ||
+            lowerName == 'project_type.txt' ||
+            lowerName == 'classes.json' ||
+            lowerName == 'labels.json') {
+          continue;
+        }
+
+        // 2. Skip individual annotation JSONs inside the annotation folder
+        // (We only want the PNG masks if you need them, or skip those too if you only want the Master COCO JSON)
+        if (entity.path.contains('${Platform.pathSeparator}annotation${Platform.pathSeparator}')) {
+          if (lowerName.endsWith('.json')) {
+            // Skip individual JSONs (we have the Master COCO now)
+            continue;
+          }
+        }
+
         String relativePath = entity.path.replaceFirst(sourcePath, '');
         // Clean leading slashes
         while (relativePath.startsWith(Platform.pathSeparator)) {
@@ -274,11 +295,13 @@ void _zipInBackground(List<String> paths) {
     }
 
     final encoder = ZipEncoder();
-    final List<int> encodedBytes = encoder.encode(archive);
+    final List<int>? encodedBytes = encoder.encode(archive);
 
-    File(destPath).writeAsBytesSync(encodedBytes);
-    debugPrint("✅ Zip Saved. Files: $count");
-    } catch (e) {
+    if (encodedBytes != null) {
+      File(destPath).writeAsBytesSync(encodedBytes);
+      debugPrint("✅ Zip Saved. Files: $count");
+    }
+  } catch (e) {
     debugPrint("Zip Error: $e");
   }
 }
