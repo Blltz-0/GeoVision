@@ -58,6 +58,7 @@ class AnnotationLayer {
   List<DrawingStroke> strokes;
   List<DrawingStroke> redoStrokes = [];
   bool isVisible;
+  bool isLocked;
   ui.Image? thumbnail;
 
   AnnotationLayer({
@@ -67,6 +68,7 @@ class AnnotationLayer {
     this.labelColor,
     List<DrawingStroke>? strokes,
     this.isVisible = true,
+    this.isLocked = false,
     this.thumbnail,
   }) : strokes = strokes ?? [];
 
@@ -79,6 +81,8 @@ class AnnotationLayer {
       'labelColor': labelColor,
       'strokes': strokes.map((s) => s.toJson()).toList(),
       'isVisible': isVisible,
+      // 3. NEW: Save Lock state
+      'isLocked': isLocked,
     };
   }
 
@@ -89,6 +93,7 @@ class AnnotationLayer {
       labelName: json['labelName'],
       labelColor: json['labelColor'],
       isVisible: json['isVisible'] ?? true,
+      isLocked: json['isLocked'] ?? false,
       strokes: (json['strokes'] as List).map((s) => DrawingStroke.fromJson(s)).toList(),
     );
   }

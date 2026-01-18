@@ -4,28 +4,35 @@ import '../functions/metadata_handle.dart';
 
 class ProjectCard extends StatelessWidget {
   final String title;
+  final String projectType;
   final VoidCallback? onReturn;
   final IconData? iconData;
 
   const ProjectCard({
     super.key,
     required this.title,
+    required this.projectType,
     required this.onReturn,
     this.iconData,
   });
 
   Future<Map<String, int>> _fetchProjectStats() async {
+    // Define which tags to fetch based on type
+    final tagsFuture = projectType == 'segmentation'
+        ? MetadataService.getLabels(title)
+        : MetadataService.getClasses(title);
+
     final results = await Future.wait([
       MetadataService.readCsvData(title),
-      MetadataService.getClasses(title),
+      tagsFuture,
     ]);
 
     final List<Map<String, dynamic>> images = results[0];
-    final List<dynamic> classes = results[1] as List<dynamic>;
+    final List<dynamic> tags = results[1] as List<dynamic>;
 
     return {
       'images': images.length,
-      'classes': classes.length,
+      'classes': tags.length,
     };
   }
 
@@ -33,12 +40,10 @@ class ProjectCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: () async {
-        // Just navigate directly. The ProjectContainerPage will handle the timestamp update.
         await Navigator.push(context, MaterialPageRoute(
           builder: (context) => ProjectContainerPage(projectName: title),
         ));
 
-        // Refresh the home page list when returning
         if (onReturn != null) {
           onReturn!();
         }
@@ -81,9 +86,7 @@ class ProjectCard extends StatelessWidget {
                         color: Colors.green[800],
                         size: 20
                     ),
-
                     const SizedBox(width: 12),
-
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
@@ -91,7 +94,12 @@ class ProjectCard extends StatelessWidget {
                         children: [
                           _buildStatBadge(Icons.image, imageCount.toString(), Colors.blue[800]!),
                           const SizedBox(height: 4),
-                          _buildStatBadge(Icons.label, classCount.toString(), Colors.orange[900]!),
+                          // Use logic to determine icon
+                          _buildStatBadge(
+                              projectType == 'segmentation' ? Icons.category : Icons.label,
+                              classCount.toString(),
+                              Colors.orange[900]!
+                          ),
                         ],
                       ),
                     ),

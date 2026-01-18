@@ -1,232 +1,15 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:geocoding/geocoding.dart';
+import 'package:path/path.dart' as p;
+import 'dart:convert';
+import 'package:path_provider/path_provider.dart'; // [ADDED] Required for directory access
 
 import '../components/class_creator.dart';
+import '../components/edit_metadata_dialog.dart';
+import '../components/location_decoder.dart';
 import '../functions/metadata_handle.dart';
 import '../components/ellipsis_menu.dart';
-
-// --- ROBUST LOCATION WIDGET (Unchanged) ---
-class LocationDisplay extends StatefulWidget {
-  final double latitude;
-  final double longitude;
-  final TextStyle style;
-
-  const LocationDisplay({
-    super.key,
-    required this.latitude,
-    required this.longitude,
-    required this.style,
-  });
-
-  @override
-  State<LocationDisplay> createState() => _LocationDisplayState();
-}
-
-class _LocationDisplayState extends State<LocationDisplay> {
-  String _displayText = "Loading...";
-
-  @override
-  void initState() {
-    super.initState();
-    _resolveAddress();
-  }
-
-  @override
-  void didUpdateWidget(LocationDisplay oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (widget.latitude != oldWidget.latitude || widget.longitude != oldWidget.longitude) {
-      _resolveAddress();
-    }
-  }
-
-  Future<void> _resolveAddress() async {
-    if (widget.latitude == 0.0 && widget.longitude == 0.0) {
-      if (mounted) setState(() => _displayText = "No GPS Data");
-      return;
-    }
-
-    String latLngString = "${widget.latitude.toStringAsFixed(5)}, ${widget.longitude.toStringAsFixed(5)}";
-    if (mounted) setState(() => _displayText = latLngString);
-
-    try {
-      List<Placemark> placemarks = await placemarkFromCoordinates(
-          widget.latitude,
-          widget.longitude
-      );
-
-      if (placemarks.isNotEmpty && mounted) {
-        Placemark place = placemarks[0];
-        String part1 = place.locality ?? "";
-        String part2 = place.administrativeArea ?? "";
-        String part3 = place.country ?? "";
-
-        String finalName = "";
-        if (part1.isNotEmpty && part2.isNotEmpty) {
-          finalName = "$part1, $part2";
-        } else if (part1.isNotEmpty) {
-          finalName = "$part1, $part3";
-        } else if (part2.isNotEmpty) {
-          finalName = "$part2, $part3";
-        } else {
-          finalName = part3;
-        }
-
-        if (finalName.trim().isEmpty || finalName.trim() == ",") {
-          finalName = "Unknown Location";
-        }
-
-        setState(() => _displayText = finalName);
-      }
-    } catch (e) {
-      debugPrint("⚠️ Geocoding Error: $e");
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Text(
-      _displayText,
-      style: widget.style,
-      overflow: TextOverflow.ellipsis,
-    );
-  }
-}
-
-// --- EDIT DIALOG (Unchanged) ---
-class EditMetadataDialog extends StatefulWidget {
-  final String filename;
-  final double initialLat;
-  final double initialLng;
-  final DateTime initialDate;
-  final Function(double lat, double lng, DateTime date) onSave;
-
-  const EditMetadataDialog({
-    super.key,
-    required this.filename,
-    required this.initialLat,
-    required this.initialLng,
-    required this.initialDate,
-    required this.onSave,
-  });
-
-  @override
-  State<EditMetadataDialog> createState() => _EditMetadataDialogState();
-}
-
-class _EditMetadataDialogState extends State<EditMetadataDialog> {
-  late TextEditingController _latController;
-  late TextEditingController _lngController;
-  late DateTime _selectedDate;
-
-  @override
-  void initState() {
-    super.initState();
-    _latController = TextEditingController(text: widget.initialLat.toString());
-    _lngController = TextEditingController(text: widget.initialLng.toString());
-    _selectedDate = widget.initialDate;
-  }
-
-  @override
-  void dispose() {
-    _latController.dispose();
-    _lngController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _pickDateTime() async {
-    final date = await showDatePicker(
-      context: context,
-      initialDate: _selectedDate,
-      firstDate: DateTime(2000),
-      lastDate: DateTime.now(),
-    );
-    if (date == null) return;
-
-    if (!mounted) return;
-
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(_selectedDate),
-    );
-    if (time == null) return;
-
-    setState(() {
-      _selectedDate = DateTime(
-          date.year, date.month, date.day, time.hour, time.minute
-      );
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text("Edit Metadata"),
-      content: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text("File: ${widget.filename}", style: const TextStyle(fontSize: 12, color: Colors.grey)),
-            const SizedBox(height: 15),
-
-            const Text("Date & Time", style: TextStyle(fontWeight: FontWeight.bold)),
-            InkWell(
-              onTap: _pickDateTime,
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-                decoration: BoxDecoration(
-                    border: Border(bottom: BorderSide(color: Colors.grey.shade400))
-                ),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text("${_selectedDate.year}-${_selectedDate.month}-${_selectedDate.day}   ${_selectedDate.hour}:${_selectedDate.minute.toString().padLeft(2, '0')}"),
-                    const Icon(Icons.edit_calendar, size: 20, color: Colors.blue),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: 15),
-
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _latController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                    decoration: const InputDecoration(labelText: "Latitude", border: OutlineInputBorder()),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: _lngController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-                    decoration: const InputDecoration(labelText: "Longitude", border: OutlineInputBorder()),
-                  ),
-                ),
-              ],
-            )
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
-        ElevatedButton(
-            onPressed: () {
-              final lat = double.tryParse(_latController.text) ?? widget.initialLat;
-              final lng = double.tryParse(_lngController.text) ?? widget.initialLng;
-              widget.onSave(lat, lng, _selectedDate);
-              Navigator.pop(context);
-            },
-            child: const Text("Save")
-        ),
-      ],
-    );
-  }
-}
 
 // --- MAIN IMAGE VIEW ---
 class ImageView extends StatefulWidget {
@@ -235,8 +18,7 @@ class ImageView extends StatefulWidget {
   final String projectName;
   final String projectType;
 
-  // 1. ADD CALLBACK HERE
-  final Function(String path)? onAnnotate;
+  final Future<bool?> Function(String path)? onAnnotate;
 
   const ImageView({
     super.key,
@@ -244,7 +26,7 @@ class ImageView extends StatefulWidget {
     required this.initialIndex,
     required this.projectName,
     required this.projectType,
-    this.onAnnotate, // 2. Receive it
+    this.onAnnotate,
   });
 
   @override
@@ -258,6 +40,8 @@ class _ImageViewState extends State<ImageView> {
   bool _hasChanges = false;
   List<Map<String, dynamic>> _metadataCache = [];
   Map<String, Color> _classColorMap = {};
+
+  bool _showAnnotations = true;
 
   @override
   void initState() {
@@ -278,6 +62,33 @@ class _ImageViewState extends State<ImageView> {
     return path.split(Platform.pathSeparator).last;
   }
 
+  // --- [NEW] Helper to remove from upload_history.json ---
+  Future<void> _removeImageFromHistory(String filename) async {
+    try {
+      final appDir = await getApplicationDocumentsDirectory();
+      final historyFile = File('${appDir.path}/projects/${widget.projectName}/upload_history.json');
+
+      if (await historyFile.exists()) {
+        final String content = await historyFile.readAsString();
+        final dynamic decoded = jsonDecode(content);
+
+        if (decoded is Map) {
+          Map<String, dynamic> historyMap = Map<String, dynamic>.from(decoded);
+
+          // Remove the entry using the filename as the key
+          if (historyMap.containsKey(filename)) {
+            historyMap.remove(filename);
+            await historyFile.writeAsString(jsonEncode(historyMap));
+            debugPrint("Removed $filename from upload history.");
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("Error removing from history: $e");
+    }
+  }
+  // -------------------------------------------------------
+
   Future<void> _loadMetadata() async {
     final data = await MetadataService.readCsvData(widget.projectName);
     final classDefs = await MetadataService.getClasses(widget.projectName);
@@ -291,6 +102,79 @@ class _ImageViewState extends State<ImageView> {
           _classColorMap[cls['name']] = Color(colorInt);
         }
       });
+    }
+  }
+
+  bool _hasAnnotation(String imagePath) {
+    if (widget.projectType != 'segmentation') return false;
+    try {
+      final imageFile = File(imagePath);
+      final String fileNameNoExt = p.basenameWithoutExtension(imagePath);
+      final Directory imageDir = imageFile.parent;
+      final Directory projectDir = imageDir.parent;
+      final String annotationPath = p.join(projectDir.path, 'annotation', '${fileNameNoExt}_data.json');
+
+      final file = File(annotationPath);
+      if (!file.existsSync()) return false;
+
+      final String content = file.readAsStringSync();
+      final List<dynamic> jsonLayers = jsonDecode(content);
+
+      return jsonLayers.any((layer) {
+        final strokes = layer['strokes'] as List?;
+        return strokes != null && strokes.isNotEmpty;
+      });
+
+    } catch (e) {
+      return false;
+    }
+  }
+
+  List<File> _getAnnotationLayers(String imagePath) {
+    if (!widget.projectType.contains('segmentation')) return [];
+
+    try {
+      final imageFile = File(imagePath);
+      final String fileNameNoExt = p.basenameWithoutExtension(imagePath);
+      final Directory imageDir = imageFile.parent;
+      final Directory projectDir = imageDir.parent;
+
+      final String annotationPath = p.join(projectDir.path, 'annotation');
+      final Directory annotationDir = Directory(annotationPath);
+
+      if (!annotationDir.existsSync()) return [];
+
+      final List<FileSystemEntity> files = annotationDir.listSync();
+
+      List<File> layerImages = [];
+
+      for (var entity in files) {
+        if (entity is File) {
+          final String name = p.basename(entity.path);
+          if (name.startsWith("${fileNameNoExt}_") && name.endsWith('.png')) {
+            layerImages.add(entity);
+          }
+        }
+      }
+
+      layerImages.sort((a, b) {
+        try {
+          String nameA = p.basenameWithoutExtension(a.path);
+          String nameB = p.basenameWithoutExtension(b.path);
+
+          int indexA = int.parse(nameA.split('_').last);
+          int indexB = int.parse(nameB.split('_').last);
+
+          return indexA.compareTo(indexB);
+        } catch (e) {
+          return 0;
+        }
+      });
+
+      return layerImages;
+    } catch (e) {
+      debugPrint("Error fetching layers: $e");
+      return [];
     }
   }
 
@@ -538,26 +422,56 @@ class _ImageViewState extends State<ImageView> {
             style: const TextStyle(color: Colors.white),
           ),
           actions: [
+            // --- UPDATED DELETE ACTION WITH CONFIRMATION ---
             EllipsisMenu(
               onInfo: () => showImageInformation(context, _currentImagePaths[_currentIndex]),
               onDelete: () async {
-                final navigator = Navigator.of(context);
-                final messenger = ScaffoldMessenger.of(context);
                 final String currentPath = _currentImagePaths[_currentIndex];
+                final String filename = currentPath.split(Platform.pathSeparator).last;
 
-                await MetadataService.deleteImage(
-                  projectName: widget.projectName,
-                  imagePath: currentPath,
+                // 1. Show Confirmation Dialog
+                final bool? shouldDelete = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Text("Delete Image?"),
+                    content: Text(
+                        "Are you sure you want to permanently delete '$filename'?\n\nThis action cannot be undone."),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text("Cancel"),
+                      ),
+                      TextButton(
+                        style: TextButton.styleFrom(foregroundColor: Colors.redAccent),
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: const Text("Delete"),
+                      ),
+                    ],
+                  ),
                 );
 
-                navigator.pop(true);
-                messenger.showSnackBar(const SnackBar(
-                  content: Text("Image Deleted"),
-                  backgroundColor: Colors.redAccent,
-                  duration: Duration(seconds: 1),
-                ));
+                // 2. If confirmed, proceed with deletion
+                if (shouldDelete == true && context.mounted) {
+                  final navigator = Navigator.of(context);
+                  final messenger = ScaffoldMessenger.of(context);
+
+                  // Delete File & CSV Entry
+                  await MetadataService.deleteImage(
+                    projectName: widget.projectName,
+                    imagePath: currentPath,
+                  );
+
+                  // Remove from Upload History
+                  await _removeImageFromHistory(filename);
+
+                  navigator.pop(true);
+                  messenger.showSnackBar(const SnackBar(
+                    content: Text("Image Deleted"),
+                    backgroundColor: Colors.redAccent,
+                    duration: Duration(seconds: 1),
+                  ));
+                }
               },
-              // onTag removed here
             ),
           ],
         ),
@@ -572,6 +486,11 @@ class _ImageViewState extends State<ImageView> {
           itemBuilder: (context, index) {
             final imagePath = _currentImagePaths[index];
             final info = _getCurrentImageInfo(imagePath);
+            final bool isAnnotated = _hasAnnotation(imagePath);
+
+            final List<File> overlayLayers = _showAnnotations && isAnnotated
+                ? _getAnnotationLayers(imagePath)
+                : [];
 
             String className = info['class'] ?? "Unclassified";
             Color tagColor = _classColorMap[className] ?? Colors.grey;
@@ -585,7 +504,6 @@ class _ImageViewState extends State<ImageView> {
                 : (double.tryParse(info['lng'].toString()) ?? 0.0);
 
             String dateString = "--";
-
             if (info['time'] != null) {
               try {
                 final dt = DateTime.parse(info['time']);
@@ -595,6 +513,7 @@ class _ImageViewState extends State<ImageView> {
 
             return Column(
               children: [
+                // Top Info Bar
                 Container(
                   height: 100,
                   width: double.infinity,
@@ -613,17 +532,18 @@ class _ImageViewState extends State<ImageView> {
                               overflow: TextOverflow.ellipsis,
                             ),
                           ),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                            decoration: BoxDecoration(
-                              color: tagColor.withValues(alpha: 0.8),
-                              borderRadius: BorderRadius.circular(4),
+                          if (widget.projectType != 'segmentation')
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: tagColor.withValues(alpha: 0.8),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                className,
+                                style: const TextStyle(color: Colors.white, fontSize: 12),
+                              ),
                             ),
-                            child: Text(
-                              className,
-                              style: const TextStyle(color: Colors.white, fontSize: 12),
-                            ),
-                          )
                         ],
                       ),
                       const Spacer(),
@@ -647,39 +567,118 @@ class _ImageViewState extends State<ImageView> {
                     ],
                   ),
                 ),
+                // Main Image Area
                 Expanded(
-                  child: InteractiveViewer(
-                    panEnabled: true,
-                    boundaryMargin: const EdgeInsets.all(20),
-                    minScale: 1,
-                    maxScale: 4.0,
-                    child: Hero(
-                      tag: imagePath,
-                      child: Image.file(
-                        File(imagePath),
-                        fit: BoxFit.contain,
+                  child: Stack(
+                    children: [
+                      InteractiveViewer(
+                        panEnabled: true,
+                        boundaryMargin: const EdgeInsets.all(20),
+                        minScale: 1,
+                        maxScale: 4.0,
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Hero(
+                              tag: imagePath,
+                              child: Image.file(
+                                File(imagePath),
+                                fit: BoxFit.contain,
+                              ),
+                            ),
+                            // Only render layers if showAnnotations is true
+                            if (_showAnnotations)
+                              ...overlayLayers.map((file) => Opacity(
+                                opacity: 0.4,
+                                child: Image.file(
+                                  file,
+                                  key: ValueKey("${file.path}_${file.lastModifiedSync().millisecondsSinceEpoch}"),
+                                  fit: BoxFit.contain,
+                                  errorBuilder: (c,e,s) => const SizedBox(),
+                                ),
+                              )),
+                          ],
+                        ),
                       ),
-                    ),
+
+                      // Only show this button if the image actually has annotations
+                      if (isAnnotated)
+                        Positioned(
+                          top: 10,
+                          right: 10,
+                          child: Material(
+                            color: Colors.transparent, // Required for InkWell ripple
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(30),
+                              onTap: () {
+                                setState(() {
+                                  _showAnnotations = !_showAnnotations;
+                                });
+                                ScaffoldMessenger.of(context).clearSnackBars();
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(_showAnnotations ? "Showing Annotations" : "Hiding Annotations"),
+                                      duration: const Duration(milliseconds: 600),
+                                      behavior: SnackBarBehavior.floating,
+                                    )
+                                );
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Colors.black.withValues(alpha: 0.6),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                      color: _showAnnotations ? Colors.lightGreenAccent : Colors.white54,
+                                      width: 1.5
+                                  ),
+                                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                                ),
+                                child: Icon(
+                                  _showAnnotations ? Icons.brush : Icons.brush,
+                                  size: 20,
+                                  color: _showAnnotations ? Colors.lightGreenAccent : Colors.white54,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                    ],
                   ),
                 ),
               ],
             );
           },
         ),
-        // --- MODIFIED FAB LOGIC HERE ---
         floatingActionButton: _buildFab(),
       ),
     );
   }
 
-  // Helper widget to keep build method clean
   Widget? _buildFab() {
     if (widget.projectType == 'segmentation') {
       return FloatingActionButton.extended(
         heroTag: "annotate_fab",
-        onPressed: () {
+        onPressed: () async {
           if (widget.onAnnotate != null) {
-            widget.onAnnotate!(_currentImagePaths[_currentIndex]);
+            bool? result = await widget.onAnnotate!(_currentImagePaths[_currentIndex]);
+
+            if (result == true && mounted) {
+              final currentImgPath = _currentImagePaths[_currentIndex];
+              final layers = _getAnnotationLayers(currentImgPath);
+
+              for (var file in layers) {
+                await FileImage(file).evict();
+              }
+
+              PaintingBinding.instance.imageCache.clear();
+              PaintingBinding.instance.imageCache.clearLiveImages();
+
+              setState(() {
+                _hasChanges = true;
+                _showAnnotations = true;
+              });
+            }
           }
         },
         icon: const Icon(Icons.brush),

@@ -1,3 +1,4 @@
+import 'dart:async'; // Required for StreamSubscription
 import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/foundation.dart';
@@ -14,15 +15,13 @@ class CameraPage extends StatefulWidget {
   final VoidCallback? onClassesUpdated;
   final VoidCallback? onPhotoTaken;
   final bool isActive;
-
-  // UPDATED: Receive Project Type
   final String projectType;
 
   const CameraPage({
     super.key,
     required this.projectName,
     required this.projectClasses,
-    required this.projectType, // UPDATED
+    required this.projectType,
     this.onClassesUpdated,
     this.onPhotoTaken,
     this.isActive = true,
@@ -38,12 +37,18 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   bool _isCapturing = false;
   String _activeTag = "Unclassified";
 
+  // --- LOCATION STATE VARIABLES ---
+  StreamSubscription<Position>? _positionStreamSubscription;
+  Position? _currentPosition;
+  bool _isLocationPermissionGranted = false;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     if (widget.isActive) {
       _setupCamera();
+      _startLocationStream(); // Start listening to location
     }
   }
 
@@ -53,11 +58,59 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     if (widget.isActive != oldWidget.isActive) {
       if (widget.isActive) {
         _setupCamera();
+        _startLocationStream();
       } else {
         _stopCamera();
+        _stopLocationStream();
       }
     }
   }
+
+  // --- LOCATION FUNCTIONS ---
+
+  Future<void> _startLocationStream() async {
+    // 1. Check Service Status
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      if (mounted) setState(() => _isLocationPermissionGranted = false);
+      return;
+    }
+
+    // 2. Check Permissions
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+        if (mounted) setState(() => _isLocationPermissionGranted = false);
+        return;
+      }
+    }
+
+    if (mounted) setState(() => _isLocationPermissionGranted = true);
+
+    // 3. Start Stream
+    // We use a distance filter of 5 meters to avoid excessive updates
+    const LocationSettings locationSettings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 5,
+    );
+
+    _positionStreamSubscription = Geolocator.getPositionStream(locationSettings: locationSettings)
+        .listen((Position? position) {
+      if (mounted) {
+        setState(() {
+          _currentPosition = position;
+        });
+      }
+    });
+  }
+
+  void _stopLocationStream() {
+    _positionStreamSubscription?.cancel();
+    _positionStreamSubscription = null;
+  }
+
+  // --- CAMERA FUNCTIONS ---
 
   Future<void> _setupCamera() async {
     try {
@@ -91,16 +144,29 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       return;
     }
 
-    final String tagForThisPhoto = _activeTag;
+    final String tagForThisPhoto = widget.projectType == 'segmentation' ? "" : _activeTag;
+
     setState(() => _isCapturing = true);
 
     try {
-      final Future<Position?> positionFuture = _getCurrentLocation();
+      // Use the cached _currentPosition if available, otherwise try to fetch one last time
+      Position? locationToSave = _currentPosition;
+      if (locationToSave == null && _isLocationPermissionGranted) {
+        try {
+          locationToSave = await Geolocator.getCurrentPosition(
+              timeLimit: const Duration(seconds: 2)
+          );
+        } catch (_) {}
+      }
+
       final XFile rawImage = await controller.takePicture();
 
       if (mounted) setState(() => _isCapturing = false);
 
-      _backgroundPipeline(rawImage, tagForThisPhoto, positionFuture);
+      // Pass the location directly (wrapped in a Future for compatibility if needed,
+      // or modify pipeline to accept Position object directly.
+      // Here we wrap it in Future.value to match existing signature)
+      _backgroundPipeline(rawImage, tagForThisPhoto, Future.value(locationToSave));
     } catch (e) {
       debugPrint("Capture Error: $e");
       if (mounted) setState(() => _isCapturing = false);
@@ -108,7 +174,6 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   }
 
   Future<void> _backgroundPipeline(XFile rawImage, String className, Future<Position?> locationFuture) async {
-    // ... [Same implementation as before] ...
     try {
       await compute(cropSquareImage, rawImage.path);
 
@@ -116,7 +181,13 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       final imagesDir = Directory('${appDir.path}/projects/${widget.projectName}/images');
       if (!await imagesDir.exists()) await imagesDir.create(recursive: true);
 
-      final String fileName = await MetadataService.generateNextFileName(imagesDir, widget.projectName, className);
+      final String fileName = await MetadataService.generateNextFileName(
+          imagesDir,
+          widget.projectName,
+          className,
+          projectType: widget.projectType
+      );
+
       final String finalPath = '${imagesDir.path}/$fileName';
 
       final File tempFile = File(rawImage.path);
@@ -124,23 +195,26 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       await tempFile.delete();
 
       await FileImage(File(finalPath)).evict();
-
       await ResizeImage(FileImage(File(finalPath)), width: 300).evict();
 
       final Position? position = await locationFuture;
+
+      String? metaClass = widget.projectType == 'segmentation' ? null : className;
 
       await MetadataService.embedMetadata(
         filePath: finalPath,
         lat: position?.latitude ?? 0.0,
         lng: position?.longitude ?? 0.0,
-        className: className,
+        className: metaClass,
+        time: DateTime.now(),
       );
 
       await MetadataService.saveToCsv(
-        projectName: widget.projectName,
-        imagePath: finalPath,
-        position: position,
-        className: className,
+          projectName: widget.projectName,
+          imagePath: finalPath,
+          position: position,
+          className: className,
+          projectType: widget.projectType
       );
 
       if (mounted) {
@@ -158,28 +232,11 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     }
   }
 
-  Future<Position?> _getCurrentLocation() async {
-    // ... [Same implementation as before] ...
-    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) return null;
-
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
-        return null;
-      }
-    }
-
-    return await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
-    );
-  }
-
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _controller?.dispose();
+    _stopLocationStream(); // Ensure stream is cancelled
     super.dispose();
   }
 
@@ -187,9 +244,11 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.inactive) {
       _controller?.dispose();
+      _stopLocationStream(); // Pause location updates when app is backgrounded
     } else if (state == AppLifecycleState.resumed) {
       if (widget.isActive) {
         _setupCamera();
+        _startLocationStream(); // Resume location updates
       }
     }
   }
@@ -228,6 +287,11 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
                       ),
                     ),
                     const Spacer(),
+
+                    // --- LOCATION INDICATOR WIDGET ---
+                    _buildLocationIndicator(),
+                    const SizedBox(height: 15),
+
                     _buildCaptureButton(),
                     const SizedBox(height: 20),
                   ],
@@ -246,7 +310,6 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
           ),
         ),
 
-        // UPDATED: Hide Dropdown if Segmentation
         if (widget.projectType == 'classification')
           Positioned(
             top: 40, left: 0, right: 0,
@@ -262,6 +325,79 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildLocationIndicator() {
+    if (!_isLocationPermissionGranted) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.location_off, color: Colors.redAccent, size: 16),
+            SizedBox(width: 8),
+            Text(
+              "Location Off",
+              style: TextStyle(color: Colors.redAccent, fontSize: 12, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_currentPosition == null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.black54,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            SizedBox(
+                width: 12, height: 12,
+                child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)
+            ),
+            SizedBox(width: 8),
+            Text(
+              "Acquiring GPS...",
+              style: TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Location found
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+          color: Colors.black45,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.green.withValues(alpha: 0.3))
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.my_location, color: Colors.greenAccent, size: 16),
+          const SizedBox(width: 8),
+          Text(
+            "Lat: ${_currentPosition!.latitude.toStringAsFixed(5)}  Lng: ${_currentPosition!.longitude.toStringAsFixed(5)}",
+            style: const TextStyle(
+                color: Colors.greenAccent,
+                fontSize: 12,
+                fontFamily: 'Monospace',
+                fontWeight: FontWeight.bold
+            ),
+          ),
+        ],
+      ),
     );
   }
 

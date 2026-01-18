@@ -211,7 +211,10 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
           var existingRow = csvMap[filename]!;
           existingRow['path'] = currentAbsolutePath;
           cleanDataList.add(existingRow);
-          newLabelMap[filename] = existingRow['class'] ?? 'Unclassified';
+          String cls = existingRow['class'] ?? '';
+          newLabelMap[filename] = cls.isEmpty && _projectType == 'classification'
+              ? 'Unclassified'
+              : cls;
         } else {
           double lat = 0.0;
           double lng = 0.0;
@@ -225,15 +228,17 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
             }
           } catch (_) {}
 
+          String defaultClass = _projectType == 'segmentation' ? '' : 'Unclassified';
+
           Map<String, dynamic> newRow = {
             'path': currentAbsolutePath,
-            'class': 'Unclassified',
+            'class': defaultClass,
             'lat': lat,
             'lng': lng,
             'time': file.lastModifiedSync().toIso8601String(),
           };
           cleanDataList.add(newRow);
-          newLabelMap[filename] = 'Unclassified';
+          newLabelMap[filename] = defaultClass;
         }
       }
 
@@ -477,8 +482,9 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
     );
   }
 
-  void _openAnnotationPage(String imagePath) {
-    Navigator.push(
+  Future<bool?> _openAnnotationPage(String imagePath) async {
+    // We await the result from AnnotationPage (which returns true if saved)
+    final bool? result = await Navigator.push(
       context,
       MaterialPageRoute(
         builder: (context) => AnnotationPage(
@@ -487,130 +493,101 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
         ),
       ),
     );
+
+    return result;
   }
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
-      canPop: false,
-      onPopInvokedWithResult: (bool didPop, dynamic result) async {
-        if (didPop) return;
-        final bool shouldLeave = await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            title: const Text("Exit Project?"),
-            content: const Text("Are you sure you want to return to the home screen?"),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text("Cancel"),
-              ),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.red,
-                  foregroundColor: Colors.white,
-                ),
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text("Exit"),
-              ),
-            ],
+    return Scaffold(
+      appBar: AppBar(
+        backgroundColor: Colors.lightGreenAccent,
+        automaticallyImplyLeading: false,
+        centerTitle: true,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.maybePop(context),
+        ),
+        title: Text(widget.projectName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        actions: [
+          _isExporting
+              ? const Padding(padding: EdgeInsets.all(12.0), child: CircularProgressIndicator())
+              : IconButton(
+              icon: const Icon(Icons.ios_share),
+              onPressed: _handleExport
           ),
-        ) ?? false;
+        ],
+      ),
+      body: IndexedStack(
+        index: _currentIndex,
+        children: [
+          _visitedIndices[0]
+              ? CameraPage(
+            projectName: widget.projectName,
+            projectClasses: _projectClasses,
+            isActive: _currentIndex == 0,
+            projectType: _projectType,
+            onClassesUpdated: () async {
+              await _loadClasses();
+              setState(() {});
+            },
+            onPhotoTaken: _synchronizeData,
+          )
+              : const SizedBox(),
 
-        if (shouldLeave && context.mounted) {
-          Navigator.of(context).pop();
-        }
-      },
-      child: Scaffold(
-        appBar: AppBar(
-          backgroundColor: Colors.lightGreenAccent,
-          automaticallyImplyLeading: false,
-          centerTitle: true,
-          leading: IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: () => Navigator.maybePop(context),
-          ),
-          title: Text(widget.projectName, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-          actions: [
-            _isExporting
-                ? const Padding(padding: EdgeInsets.all(12.0), child: CircularProgressIndicator())
-                : IconButton(
-                icon: const Icon(Icons.ios_share),
-                onPressed: _handleExport
-            ),
-          ],
-        ),
-        body: IndexedStack(
-          index: _currentIndex,
-          children: [
-            _visitedIndices[0]
-                ? CameraPage(
-              projectName: widget.projectName,
-              projectClasses: _projectClasses,
-              isActive: _currentIndex == 0,
-              projectType: _projectType,
-              onClassesUpdated: () async {
-                await _loadClasses();
-                setState(() {});
-              },
-              onPhotoTaken: _synchronizeData,
-            )
-                : const SizedBox(),
+          _visitedIndices[1]
+              ? ImagesPage(
+            projectName: widget.projectName,
+            images: _projectImages,
+            labelMap: _labelMap,
+            projectClasses: _projectClasses,
+            isLoading: _isLoadingImages,
+            projectType: _projectType,
+            onAnnotate: _openAnnotationPage,
+            onDataChanged: _synchronizeData,
+            onClassesUpdated: () async {
+              await _loadClasses();
+              setState(() {});
+            },
+          )
+              : const SizedBox(),
 
-            _visitedIndices[1]
-                ? ImagesPage(
-              projectName: widget.projectName,
-              images: _projectImages,
-              labelMap: _labelMap,
-              projectClasses: _projectClasses,
-              isLoading: _isLoadingImages,
-              projectType: _projectType,
-              onAnnotate: _openAnnotationPage,
-              onDataChanged: _synchronizeData,
-              onClassesUpdated: () async {
-                await _loadClasses();
-                setState(() {});
-              },
-            )
-                : const SizedBox(),
+          _visitedIndices[2]
+              ? MapPage(
+            projectName: widget.projectName,
+            mapData: _csvData,
+            projectClasses: _projectClasses,
+            projectType: _projectType,
+            onClassesUpdated: () async {
+              await _loadClasses();
+              setState(() {});
+            },
+          )
+              : const SizedBox(),
 
-            _visitedIndices[2]
-                ? MapPage(
-              projectName: widget.projectName,
-              mapData: _csvData,
-              projectClasses: _projectClasses,
-              projectType: _projectType,
-              onClassesUpdated: () async {
-                await _loadClasses();
-                setState(() {});
-              },
-            )
-                : const SizedBox(),
-
-            _visitedIndices[3]
-                ? ProjectSettings(
-              projectName: widget.projectName,
-              projectType: _projectType,
-              onManageClasses: _openManageClasses,
-              onManageLabels: _openManageLabels,
-              onRenameProject: _renameProject,
-              onDeleteProject: _confirmDelete,
-            )
-                : const SizedBox(),
-          ],
-        ),
-        bottomNavigationBar: BottomNavigationBar(
-          type: BottomNavigationBarType.fixed,
-          backgroundColor: Colors.lightGreenAccent,
-          currentIndex: _currentIndex,
-          onTap: _onTabTapped,
-          items: const [
-            BottomNavigationBarItem(icon: Icon(Icons.camera_alt), label: 'Camera'),
-            BottomNavigationBarItem(icon: Icon(Icons.photo_library), label: 'Gallery'),
-            BottomNavigationBarItem(icon: Icon(Icons.map), label: 'Map'),
-            BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'),
-          ],
-        ),
+          _visitedIndices[3]
+              ? ProjectSettings(
+            projectName: widget.projectName,
+            projectType: _projectType,
+            onManageClasses: _openManageClasses,
+            onManageLabels: _openManageLabels,
+            onRenameProject: _renameProject,
+            onDeleteProject: _confirmDelete,
+          )
+              : const SizedBox(),
+        ],
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        type: BottomNavigationBarType.fixed,
+        backgroundColor: Colors.lightGreenAccent,
+        currentIndex: _currentIndex,
+        onTap: _onTabTapped,
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.camera_alt), label: 'Camera'),
+          BottomNavigationBarItem(icon: Icon(Icons.photo_library), label: 'Gallery'),
+          BottomNavigationBarItem(icon: Icon(Icons.map), label: 'Map'),
+          BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'),
+        ],
       ),
     );
   }

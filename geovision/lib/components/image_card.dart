@@ -19,7 +19,7 @@ class ImageCard extends StatelessWidget {
     return Container(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.withValues(alpha:0.2)), // Fixed withValues to withOpacity (standard)
+        border: Border.all(color: Colors.grey.withValues(alpha:0.2)),
       ),
       child: ClipRRect(
         borderRadius: BorderRadius.circular(8),
@@ -44,19 +44,17 @@ class ImageCard extends StatelessWidget {
             ),
 
             // LAYER 2: The Gradient Overlay
-            // We use Positioned.fill so the gradient covers the whole image area
-            // (or keep your Positioned logic if you only want it at the bottom)
             Positioned(
               left: 0,
               right: 0,
               bottom: 0,
-              top: 0, // Added 'top: 0' so the gradient fills the full height
+              top: 0,
               child: GradientCardOverlay(
                 indicatorColor: classColor,
               ),
             ),
 
-            // LAYER 3: The Text Label (Optional, if you want to see the class name)
+            // LAYER 3: The Text Label
             if (className != null)
               Positioned(
                 bottom: 8,
@@ -65,7 +63,10 @@ class ImageCard extends StatelessWidget {
                   className!,
                   style: const TextStyle(
                       color: Colors.white,
-                      fontWeight: FontWeight.bold
+                      fontWeight: FontWeight.bold,
+                      shadows: [
+                        Shadow(offset: Offset(0,1), blurRadius: 2, color: Colors.black)
+                      ]
                   ),
                 ),
               ),

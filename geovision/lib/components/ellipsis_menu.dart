@@ -3,13 +3,11 @@ import 'package:flutter/material.dart';
 class EllipsisMenu extends StatelessWidget {
   final VoidCallback onInfo;
   final VoidCallback onDelete;
-  // onTag removed
 
   const EllipsisMenu({
     super.key,
     required this.onInfo,
     required this.onDelete,
-    // onTag removed
   });
 
   @override
@@ -21,7 +19,6 @@ class EllipsisMenu extends StatelessWidget {
       },
       itemBuilder: (BuildContext context) {
         return [
-          // Tag Option Removed
           const PopupMenuItem(
             value: 'Info',
             child: Row(

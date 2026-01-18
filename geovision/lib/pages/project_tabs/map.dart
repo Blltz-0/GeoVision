@@ -265,13 +265,14 @@ class _MapPageState extends State<MapPage> {
                   const SizedBox(height: 10),
 
                   // Class Row
-                  Row(
-                    children: [
+                  if (widget.projectType == "classification")
+                    Row(
+                      children: [
                       const Icon(Icons.label, size: 16, color: Colors.blue),
                       const SizedBox(width: 8),
                       Text("Class: $className", style: const TextStyle(fontSize: 14)),
-                    ],
-                  ),
+                      ],
+                    ),
                   const SizedBox(height: 5),
 
                   // Date Row

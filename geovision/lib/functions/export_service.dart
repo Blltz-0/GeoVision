@@ -1,7 +1,5 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
-import 'dart:ui' as ui;
 import 'package:archive/archive_io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -266,6 +264,7 @@ void _zipInBackground(List<String> paths) {
         // 1. Skip system files
         if (lowerName == 'last_opened.txt' ||
             lowerName == 'project_type.txt' ||
+            lowerName == 'upload_history.json' ||
             lowerName == 'classes.json' ||
             lowerName == 'labels.json') {
           continue;
@@ -295,13 +294,11 @@ void _zipInBackground(List<String> paths) {
     }
 
     final encoder = ZipEncoder();
-    final List<int>? encodedBytes = encoder.encode(archive);
+    final List<int> encodedBytes = encoder.encode(archive);
 
-    if (encodedBytes != null) {
-      File(destPath).writeAsBytesSync(encodedBytes);
-      debugPrint("✅ Zip Saved. Files: $count");
-    }
-  } catch (e) {
+    File(destPath).writeAsBytesSync(encodedBytes);
+    debugPrint("✅ Zip Saved. Files: $count");
+    } catch (e) {
     debugPrint("Zip Error: $e");
   }
 }

@@ -5,23 +5,19 @@ class LayerPainter extends CustomPainter {
   final List<DrawingStroke> strokes;
   final DrawingStroke? currentStroke;
   final Offset? cursorPosition;
-  final Size? imageSize; // <--- NEW: We need the original image dimensions
+  final Size? imageSize;
 
   LayerPainter({
     required this.strokes,
     this.currentStroke,
     this.cursorPosition,
-    this.imageSize, // <--- Add to constructor
+    this.imageSize,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     canvas.save();
 
-    // --- THE FIX: SCALING ---
-    // If we know the original image size, we scale the canvas
-    // to match the current display size.
-    // Example: Image is 1000px, Screen is 500px -> Scale = 0.5
     double scale = 1.0;
     if (imageSize != null) {
       scale = size.width / imageSize!.width;

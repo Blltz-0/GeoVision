@@ -9,7 +9,7 @@ class MetadataService {
   static Future<void> _saveLock = Future.value();
 
   // --- 1. REBUILD DATABASE (The "Nuclear" Sync) ---
-  static Future<void> rebuildProjectData(String projectName) async {
+  static Future<void> rebuildProjectData(String projectName, {String projectType = 'classification'}) async {
     final appDir = await getApplicationDocumentsDirectory();
     final projectDir = Directory('${appDir.path}/projects/$projectName/images');
     final csvFile = File('${appDir.path}/projects/$projectName/project_data.csv');
@@ -17,9 +17,9 @@ class MetadataService {
 
     if (!await projectDir.exists()) return;
 
-    // 1. Load Valid Classes
+    // 1. Load Valid Classes (Only for classification)
     Set<String> validClasses = {'Unclassified'};
-    if (await classFile.exists()) {
+    if (projectType == 'classification' && await classFile.exists()) {
       try {
         List<dynamic> jsonList = jsonDecode(await classFile.readAsString());
         for (var item in jsonList) {
@@ -45,18 +45,25 @@ class MetadataService {
         continue;
       }
 
-      String finalClass = "Unclassified";
+      String finalClass = "";
+
+      if (projectType == 'classification') {
+        finalClass = "Unclassified";
+      }
+
       double lat = 0.0;
       double lng = 0.0;
 
-      // 3. Extract Data from Filename
-      List<String> parts = filename.split('_');
-      if (parts.length >= 2) {
-        String candidate = parts[1];
-        if (validClasses.contains(candidate)) {
-          finalClass = candidate;
-        } else if (int.tryParse(candidate) == null) {
-          finalClass = "Unclassified";
+      // 3. Extract Data from Filename (Classification only)
+      if (projectType == 'classification') {
+        List<String> parts = filename.split('_');
+        if (parts.length >= 2) {
+          String candidate = parts[1];
+          if (validClasses.contains(candidate)) {
+            finalClass = candidate;
+          } else if (int.tryParse(candidate) == null) {
+            finalClass = "Unclassified";
+          }
         }
       }
 
@@ -81,7 +88,7 @@ class MetadataService {
 
     // 6. Write to CSV
     await csvFile.writeAsString('${newCsvRows.join('\n')}\n');
-    debugPrint("✅ Project Database Rebuilt for $projectName");
+    debugPrint("✅ Project Database Rebuilt for $projectName ($projectType)");
   }
 
   // --- 2. SAVE TO CSV (Append) ---
@@ -90,6 +97,7 @@ class MetadataService {
     required String imagePath,
     required Position? position,
     String? className,
+    String projectType = 'classification',
   }) async {
     _saveLock = _saveLock.then((_) async {
       final appDir = await getApplicationDocumentsDirectory();
@@ -100,7 +108,12 @@ class MetadataService {
       }
 
       final String cleanPath = imagePath.replaceAll(',', '');
-      final String cls = (className ?? 'Unclassified').replaceAll(',', '');
+
+      String cls = '';
+      if (projectType == 'classification') {
+        cls = (className ?? 'Unclassified').replaceAll(',', '');
+      }
+
       final String lat = position?.latitude.toString() ?? '0.0';
       final String lng = position?.longitude.toString() ?? '0.0';
       final String timestamp = DateTime.now().toIso8601String();
@@ -138,7 +151,7 @@ class MetadataService {
         if (parts.length >= 4) {
           dataPoints.add({
             "path": parts[0],
-            "class": parts.length > 1 ? parts[1] : "Unclassified",
+            "class": parts.length > 1 ? parts[1] : "",
             "lat": parts.length > 2 ? (double.tryParse(parts[2]) ?? 0.0) : 0.0,
             "lng": parts.length > 3 ? (double.tryParse(parts[3]) ?? 0.0) : 0.0,
             "time": parts.length > 4 ? parts[4] : "",
@@ -149,25 +162,32 @@ class MetadataService {
     return dataPoints;
   }
 
-  // --- 4. EMBED METADATA (Updated for Date/Time) ---
+  // --- 4. EMBED METADATA (Updated for Bulk Tagging) ---
   static Future<void> embedMetadata({
     required String filePath,
     required double lat,
     required double lng,
     String? className,
-    DateTime? time, // <--- ADDED: Optional time parameter
+    DateTime? time,
+    bool updateClassOnly = false, // ADDED: Flag to preserve existing LatLng
   }) async {
     try {
       final exif = await Exif.fromPath(filePath);
-      Map<String, Object> attributes = {
-        'GPSLatitude': lat.abs(),
-        'GPSLatitudeRef': lat >= 0 ? 'N' : 'S',
-        'GPSLongitude': lng.abs(),
-        'GPSLongitudeRef': lng >= 0 ? 'E' : 'W',
-      };
-      if (className != null) attributes['UserComment'] = className;
+      Map<String, Object> attributes = {};
 
-      // --- ADDED: Write Date/Time to EXIF if provided ---
+      // If we are NOT only updating the class, we write lat/lng
+      if (!updateClassOnly) {
+        attributes['GPSLatitude'] = lat.abs();
+        attributes['GPSLatitudeRef'] = lat >= 0 ? 'N' : 'S';
+        attributes['GPSLongitude'] = lng.abs();
+        attributes['GPSLongitudeRef'] = lng >= 0 ? 'E' : 'W';
+      }
+
+      // Update UserComment (Class)
+      if (className != null && className.isNotEmpty) {
+        attributes['UserComment'] = className;
+      }
+
       if (time != null) {
         String formattedDate = "${time.year}:${time.month.toString().padLeft(2, '0')}:${time.day.toString().padLeft(2, '0')} ${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}:${time.second.toString().padLeft(2, '0')}";
         attributes['DateTimeOriginal'] = formattedDate;
@@ -181,13 +201,76 @@ class MetadataService {
     }
   }
 
-  // --- 5. UPDATE IMAGE METADATA (Added from previous step) ---
+  // --- NEW METHOD: REMOVE SINGLE ENTRY FROM CSV ---
+  static Future<void> removeEntry(String projectName, String filename) async {
+    final appDir = await getApplicationDocumentsDirectory();
+    final File csvFile = File('${appDir.path}/projects/$projectName/project_data.csv');
+
+    if (await csvFile.exists()) {
+      List<String> lines = await csvFile.readAsLines();
+      List<String> newLines = [];
+
+      // Keep Header
+      if (lines.isNotEmpty) newLines.add(lines[0]);
+
+      for (int i = 1; i < lines.length; i++) {
+        // Only keep lines that DO NOT end with the filename
+        if (!lines[i].contains(filename)) {
+          newLines.add(lines[i]);
+        }
+      }
+
+      await csvFile.writeAsString(newLines.join('\n'));
+    }
+  }
+
+  // --- NEW METHOD: UPDATE SINGLE CLASS IN CSV ---
+  static Future<void> updateClassInCsv({
+    required String projectName,
+    required String imagePath,
+    required String newClassName,
+  }) async {
+    final appDir = await getApplicationDocumentsDirectory();
+    final File csvFile = File('${appDir.path}/projects/$projectName/project_data.csv');
+    final String targetFilename = imagePath.split(Platform.pathSeparator).last;
+
+    if (await csvFile.exists()) {
+      List<String> lines = await csvFile.readAsLines();
+      List<String> newLines = [];
+
+      if (lines.isNotEmpty) newLines.add(lines[0]); // Header
+
+      for (int i = 1; i < lines.length; i++) {
+        String line = lines[i];
+        List<String> parts = line.split(',');
+
+        // Identify row by filename (safest bet)
+        if (parts.isNotEmpty && parts[0].endsWith(targetFilename)) {
+          // Reconstruct the line with the new class
+          String path = parts[0];
+          // parts[1] is class, skip it
+          String lat = parts.length > 2 ? parts[2] : "0.0";
+          String lng = parts.length > 3 ? parts[3] : "0.0";
+          String time = parts.length > 4 ? parts[4] : "";
+
+          newLines.add("$path,$newClassName,$lat,$lng,$time");
+        } else {
+          newLines.add(line);
+        }
+      }
+
+      await csvFile.writeAsString(newLines.join('\n'));
+    }
+  }
+
+  // --- 5. UPDATE IMAGE METADATA ---
   static Future<void> updateImageMetadata({
     required String projectName,
     required String imagePath,
     required double lat,
     required double lng,
     required DateTime time,
+    String projectType = 'classification',
   }) async {
     final appDir = await getApplicationDocumentsDirectory();
     final File csvFile = File('${appDir.path}/projects/$projectName/project_data.csv');
@@ -207,9 +290,8 @@ class MetadataService {
 
         if (parts.isNotEmpty && parts[0].endsWith(targetName)) {
           String currentPath = parts[0];
-          String currentClass = parts.length > 1 ? parts[1] : "Unclassified";
+          String currentClass = parts.length > 1 ? parts[1] : (projectType == 'classification' ? "Unclassified" : "");
 
-          // Construct new line with updated data
           String newLine = "$currentPath,$currentClass,$lat,$lng,${time.toIso8601String()}";
           newLines.add(newLine);
           found = true;
@@ -249,10 +331,13 @@ class MetadataService {
     return (await file.exists()) ? List<Map<String, dynamic>>.from(jsonDecode(await file.readAsString())) : [];
   }
 
-  static Future<void> deleteImage({required String projectName, required String imagePath}) async {
+  static Future<void> deleteImage({required String projectName, required String imagePath, String projectType = 'classification'}) async {
     final File imageFile = File(imagePath);
     if (await imageFile.exists()) await imageFile.delete();
-    await rebuildProjectData(projectName);
+
+    // Instead of full rebuild, we can just remove the entry now
+    final filename = imagePath.split(Platform.pathSeparator).last;
+    await removeEntry(projectName, filename);
   }
 
   static Future<void> deleteClass(String projectName, String className) async {
@@ -313,8 +398,11 @@ class MetadataService {
         String lat = row['lat'].toString();
         String lng = row['lng'].toString();
         String time = row['time'].toString();
+        // Ensure standard formatting
         String filename = path.split(Platform.pathSeparator).last;
-        sink.writeln("$filename,$cls,$lat,$lng,$time");
+        // Reconstruct full path if necessary, or just use what was in CSV
+        // Here we assume the CSV path is sufficient.
+        sink.writeln("$path,$cls,$lat,$lng,$time");
       }
       await sink.flush();
       await sink.close();
@@ -322,15 +410,23 @@ class MetadataService {
   }
 
   // --- FILE RENAMING / TAGGING ---
-  static Future<String> generateNextFileName(Directory projectDir, String projectName, String className) async {
+
+  static Future<String> generateNextFileName(Directory projectDir, String projectName, String className, {String projectType = 'classification'}) async {
     String cleanProject = projectName.replaceAll(RegExp(r'[^\w\s]+'), '').replaceAll(' ', '_');
     String cleanClass = className.replaceAll(RegExp(r'[^\w\s]+'), '').replaceAll(' ', '_');
 
-    if (cleanClass.isEmpty) cleanClass = "Unclassified";
+    if (cleanClass.isEmpty && projectType == 'classification') cleanClass = "Unclassified";
 
     int counter = 1;
     while (true) {
-      String fileName = "${cleanProject}_${cleanClass}_$counter.jpg";
+      String fileName;
+
+      if (projectType == 'segmentation') {
+        fileName = "${cleanProject}_$counter.jpg";
+      } else {
+        fileName = "${cleanProject}_${cleanClass}_$counter.jpg";
+      }
+
       if (!await File('${projectDir.path}/$fileName').exists()) {
         return fileName;
       }
@@ -338,7 +434,12 @@ class MetadataService {
     }
   }
 
-  static Future<String?> tagImage(String projectName, String oldImagePath, String newClassName) async {
+  static Future<String?> tagImage(String projectName, String oldImagePath, String newClassName, {String projectType = 'classification'}) async {
+    if (projectType == 'segmentation') {
+      debugPrint("Tagging skipped for Segmentation project");
+      return oldImagePath;
+    }
+
     final appDir = await getApplicationDocumentsDirectory();
     final projectDir = Directory('${appDir.path}/projects/$projectName/images');
 
@@ -352,37 +453,40 @@ class MetadataService {
 
       if (currentFilename.startsWith("${cleanProject}_${cleanClass}_")) {
         debugPrint("File is already named correctly. Updating metadata only.");
-        final exif = await Exif.fromPath(oldImagePath);
-        final latLong = await exif.getLatLong();
-        await exif.close();
 
+        // Use updateClassInCsv for efficiency
+        await updateClassInCsv(projectName: projectName, imagePath: oldImagePath, newClassName: newClassName);
+
+        // Update EXIF
         await embedMetadata(
             filePath: oldImagePath,
-            lat: latLong?.latitude ?? 0.0,
-            lng: latLong?.longitude ?? 0.0,
-            className: newClassName
+            lat: 0, // Ignored
+            lng: 0,
+            className: newClassName,
+            updateClassOnly: true // Preserve LatLng
         );
-        await rebuildProjectData(projectName);
         return oldImagePath;
       }
 
-      String newFileName = await generateNextFileName(projectDir, projectName, newClassName);
+      String newFileName = await generateNextFileName(projectDir, projectName, newClassName, projectType: projectType);
       String newImagePath = '${projectDir.path}/$newFileName';
 
       await oldFile.rename(newImagePath);
 
-      final exif = await Exif.fromPath(newImagePath);
-      final latLong = await exif.getLatLong();
-      await exif.close();
+      // We moved the file, so we need to rebuild or update the CSV entry extensively.
+      // For simplicity/safety on rename, we can rebuild.
+      // Or we could implement a "moveEntry" method, but rebuildProjectData is safer for file renames.
+      await rebuildProjectData(projectName, projectType: projectType);
 
+      // Re-embed metadata in new file
       await embedMetadata(
           filePath: newImagePath,
-          lat: latLong?.latitude ?? 0.0,
-          lng: latLong?.longitude ?? 0.0,
-          className: newClassName
+          lat: 0,
+          lng: 0,
+          className: newClassName,
+          updateClassOnly: true
       );
 
-      await rebuildProjectData(projectName);
       return newImagePath;
     } catch (e) {
       debugPrint("❌ Error tagging image: $e");

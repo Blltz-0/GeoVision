@@ -91,9 +91,8 @@ class _AnnotationPageState extends State<AnnotationPage> {
     super.dispose();
   }
 
-  // --- HELPERS: COORDINATE CONVERSION (THE FIX) ---
+  // --- HELPERS ---
 
-  // Converts a screen touch (e.g. 200, 200) to an image coordinate (e.g. 2000, 2000)
   Offset _toImageCoordinates(Offset localPosition) {
     if (_imageSize == null || _imageKey.currentContext == null) return localPosition;
 
@@ -109,7 +108,6 @@ class _AnnotationPageState extends State<AnnotationPage> {
     );
   }
 
-  // Scale brush size so it matches image resolution
   double _getScaledStrokeWidth() {
     if (_imageSize == null || _imageKey.currentContext == null) return _strokeWidth;
     final RenderBox? box = _imageKey.currentContext!.findRenderObject() as RenderBox?;
@@ -119,7 +117,6 @@ class _AnnotationPageState extends State<AnnotationPage> {
     return _strokeWidth * scale;
   }
 
-  // --- FEEDBACK POPUP ---
   void _showFeedback(String message) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).clearSnackBars();
@@ -137,6 +134,12 @@ class _AnnotationPageState extends State<AnnotationPage> {
         backgroundColor: Colors.grey,
       ),
     );
+  }
+
+  void _toggleLayerLock(int index) {
+    setState(() {
+      _layers[index].isLocked = !_layers[index].isLocked;
+    });
   }
 
   // --- FILE MANAGEMENT ---
@@ -161,20 +164,40 @@ class _AnnotationPageState extends State<AnnotationPage> {
       final dir = await _getAnnotationDirectory();
       final String baseImageName = p.basenameWithoutExtension(widget.imagePath);
 
-      // 1. Save PNGs
+      // --- FIX: AGGRESSIVE CLEANUP ---
+      // We must delete ALL existing PNG files for this image before saving the new set.
+      // This ensures that if we deleted Layer 2 (index 1), the old file _1.png or _2.png is gone.
+      if (await dir.exists()) {
+        final List<FileSystemEntity> existingFiles = dir.listSync();
+        for (var entity in existingFiles) {
+          if (entity is File) {
+            final String name = p.basename(entity.path);
+            // Delete files that match the pattern: ImageName_*.png
+            if (name.startsWith("${baseImageName}_") && name.endsWith(".png")) {
+              try {
+                await entity.delete();
+              } catch (e) {
+                debugPrint("Could not delete stale file: $e");
+              }
+            }
+          }
+        }
+      }
+      // -------------------------------
+
+      // 1. Save PNGs (Fresh Write)
       for (int i = 0; i < _layers.length; i++) {
         final layer = _layers[i];
         if (layer.strokes.isEmpty) continue;
 
+        // Use index 'i' to guarantee the file order matches the list order
         final safeLabel = (layer.labelName ?? "Layer").replaceAll(RegExp(r'[^\w\s]+'), '');
         final fileName = "${baseImageName}_${safeLabel}_$i.png";
         final File file = File(p.join(dir.path, fileName));
 
         final recorder = ui.PictureRecorder();
-        // Canvas is full image size
         final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, _imageSize!.width, _imageSize!.height));
 
-        // Painter draws in image coordinates (no scaling needed for save, so passed scale is implicitly 1.0)
         final painter = LayerPainter(strokes: layer.strokes);
         painter.paint(canvas, _imageSize!);
 
@@ -244,9 +267,24 @@ class _AnnotationPageState extends State<AnnotationPage> {
     _showFeedback("Reset Image Position");
   }
 
+  // --- FIX: SMART NAMING ---
   void _addNewLayer() {
     setState(() {
-      int newNum = _layers.length + 1;
+      int maxNum = 0;
+
+      // Scan existing layers to find the highest number
+      for (var layer in _layers) {
+        // Look for pattern "Layer X"
+        final match = RegExp(r'Layer (\d+)').firstMatch(layer.name);
+        if (match != null) {
+          final num = int.parse(match.group(1)!);
+          if (num > maxNum) maxNum = num;
+        }
+      }
+
+      // Always increment the highest found number
+      int newNum = maxNum + 1;
+
       _layers.add(AnnotationLayer(id: DateTime.now().toIso8601String(), name: "Layer $newNum"));
       _activeLayerIndex = _layers.length - 1;
     });
@@ -261,6 +299,11 @@ class _AnnotationPageState extends State<AnnotationPage> {
   }
 
   void _confirmDeleteLayer(int index, StateSetter setModalState) {
+    if (_layers[index].isLocked) {
+      _showFeedback("Layer is Locked. Unlock to delete.");
+      return;
+    }
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
@@ -291,8 +334,17 @@ class _AnnotationPageState extends State<AnnotationPage> {
 
   void _deleteLayer(int index) {
     setState(() {
+      // 1. Dispose and remove the targeted layer
       _layers[index].thumbnail?.dispose();
       _layers.removeAt(index);
+
+      for (int i = 0; i < _layers.length; i++) {
+        final String currentName = _layers[i].name;
+
+        if (RegExp(r'^Layer \d+$').hasMatch(currentName)) {
+          _layers[i].name = "Layer ${i + 1}";
+        }
+      }
 
       if (_layers.isEmpty) {
         _addNewLayer();
@@ -307,10 +359,15 @@ class _AnnotationPageState extends State<AnnotationPage> {
         }
       }
     });
+
     _showFeedback("Layer Deleted");
   }
 
   void _clearLayer(int index) async {
+    if (_layers[index].isLocked) {
+      _showFeedback("Layer is Locked. Unlock to clear.");
+      return;
+    }
     setState(() {
       _layers[index].strokes.clear();
       _layers[index].redoStrokes.clear();
@@ -320,6 +377,10 @@ class _AnnotationPageState extends State<AnnotationPage> {
   }
 
   void _updateLayerLabel(int layerIndex, String name, int colorInt) {
+    if (_layers[layerIndex].isLocked) {
+      _showFeedback("Unlock layer to change label.");
+      return;
+    }
     setState(() {
       final layer = _layers[layerIndex];
       final newColor = Color(colorInt);
@@ -327,7 +388,6 @@ class _AnnotationPageState extends State<AnnotationPage> {
       layer.labelName = name;
       layer.labelColor = colorInt;
 
-      // Update color but preserve eraser
       layer.strokes = layer.strokes.map((stroke) {
         if (stroke.isEraser) return stroke;
         return stroke.copyWith(color: newColor);
@@ -392,8 +452,6 @@ class _AnnotationPageState extends State<AnnotationPage> {
     canvas.scale(scale, scale);
     canvas.translate(-contentBounds.left, -contentBounds.top);
 
-    // Note: We do NOT pass imageSize here, because we manually calculated the scale above
-    // to fit the strokes into 100x100.
     final painter = LayerPainter(strokes: layer.strokes);
     painter.paint(canvas, Size.infinite);
 
@@ -432,15 +490,17 @@ class _AnnotationPageState extends State<AnnotationPage> {
     return local;
   }
 
-  // --- UPDATED SCALE LOGIC (CONVERTS TO IMAGE COORDS) ---
   void _onScaleStart(ScaleStartDetails details) {
     _activePointerCount = details.pointerCount;
     if (_activePointerCount == 1) {
+      if (_layers[_activeLayerIndex].isLocked) {
+        _showFeedback("Layer Locked");
+        return;
+      }
       if (!_layers[_activeLayerIndex].isVisible) return;
 
       final validLocalPoint = _getLocalValidPoint(details.focalPoint);
       if (validLocalPoint != null) {
-        // Convert screen point to image point immediately
         final imagePoint = _toImageCoordinates(validLocalPoint);
         setState(() => _currentStrokePoints = [imagePoint]);
       }
@@ -467,11 +527,11 @@ class _AnnotationPageState extends State<AnnotationPage> {
     }
 
     if (_activePointerCount == 1) {
+      if (_layers[_activeLayerIndex].isLocked) return;
       if (!_layers[_activeLayerIndex].isVisible) return;
 
       final validLocalPoint = _getLocalValidPoint(details.focalPoint);
       if (validLocalPoint != null) {
-        // Convert to Image Coords
         final imagePoint = _toImageCoordinates(validLocalPoint);
         setState(() => _currentStrokePoints.add(imagePoint));
       }
@@ -494,15 +554,13 @@ class _AnnotationPageState extends State<AnnotationPage> {
 
   void _onScaleEnd(ScaleEndDetails details) async {
     if (_currentStrokePoints.isNotEmpty && _activePointerCount == 1) {
+      if (_layers[_activeLayerIndex].isLocked) return;
       if (!_layers[_activeLayerIndex].isVisible) return;
 
       final newStroke = DrawingStroke(
         points: List.from(_currentStrokePoints),
         color: _getActiveLayerColor(),
-
-        // Use Scaled Width
         width: _getScaledStrokeWidth(),
-
         isEraser: _currentTool == DrawingTool.eraser,
       );
       setState(() {
@@ -537,6 +595,55 @@ class _AnnotationPageState extends State<AnnotationPage> {
     await _generateThumbnail(_activeLayerIndex);
   }
 
+  void _confirmResetAllAnnotations(StateSetter setModalState) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF333333),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        title: const Text("Reset All?", style: TextStyle(color: Colors.white)),
+        content: const Text(
+          "This will delete ALL layers and drawings. This action cannot be undone.",
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text("Cancel", style: TextStyle(color: Colors.white)),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop(); // Close dialog
+              _performResetAll(setModalState);
+            },
+            child: const Text("Reset", style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _performResetAll(StateSetter setModalState) {
+    setState(() {
+      // 1. Dispose existing resources
+      for (var layer in _layers) {
+        layer.thumbnail?.dispose();
+      }
+
+      // 2. Clear list
+      _layers.clear();
+
+      // 3. Create fresh state
+      _addNewLayer(); // This will create "Layer 1"
+      _activeLayerIndex = 0;
+    });
+
+    // 4. Update the modal immediately
+    setModalState(() {});
+
+    _showFeedback("All annotations reset");
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_imageAspectRatio == null) {
@@ -553,8 +660,38 @@ class _AnnotationPageState extends State<AnnotationPage> {
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
-        await _saveProject();
-        if (context.mounted) Navigator.of(context).pop();
+        final bool shouldExit = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            backgroundColor: const Color(0xFF333333),
+            title: const Text("Save and Exit?", style: TextStyle(color: Colors.white)),
+            content: const Text(
+              "All changes will be saved.",
+              style: TextStyle(color: Colors.white70),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text("Cancel", style: TextStyle(color: Colors.white)),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.lightGreenAccent,
+                  foregroundColor: Colors.black,
+                ),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text("Save & Exit"),
+              ),
+            ],
+          ),
+        ) ?? false;
+
+        if (shouldExit && context.mounted) {
+          await _saveProject();
+          if (context.mounted) {
+            Navigator.of(context).pop(true);
+          }
+        }
       },
       child: Scaffold(
         backgroundColor: Colors.black,
@@ -562,6 +699,12 @@ class _AnnotationPageState extends State<AnnotationPage> {
           backgroundColor: Colors.black,
           iconTheme: const IconThemeData(color: Colors.white),
           title: const Text("Annotate", style: TextStyle(color: Colors.white)),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () {
+              Navigator.maybePop(context);
+            },
+          ),
           actions: [
             IconButton(icon: const Icon(Icons.refresh), onPressed: _resetView),
             IconButton(
@@ -614,10 +757,9 @@ class _AnnotationPageState extends State<AnnotationPage> {
                                   liveStroke = DrawingStroke(
                                     points: _currentStrokePoints,
                                     color: _getActiveLayerColor(),
-                                    width: _getScaledStrokeWidth(), // Use scaled width for live stroke too
+                                    width: _getScaledStrokeWidth(),
                                     isEraser: _currentTool == DrawingTool.eraser,
                                   );
-                                  // Cursor is still in Image Coordinates, painter will scale it
                                   cursorPosition = _currentStrokePoints.last;
                                 }
 
@@ -630,7 +772,7 @@ class _AnnotationPageState extends State<AnnotationPage> {
                                           strokes: layer.strokes,
                                           currentStroke: liveStroke,
                                           cursorPosition: cursorPosition,
-                                          imageSize: _imageSize, // Pass original image size!
+                                          imageSize: _imageSize,
                                         ),
                                       ),
                                     ),
@@ -714,7 +856,6 @@ class _AnnotationPageState extends State<AnnotationPage> {
     );
   }
 
-  // --- MODAL & SLIDER ---
   void _showSizeSlider() {
     showModalBottomSheet(
       context: context,
@@ -752,7 +893,6 @@ class _AnnotationPageState extends State<AnnotationPage> {
     );
   }
 
-  // --- LAYER MANAGER ---
   void _showLayerManager() {
     showModalBottomSheet(
       context: context,
@@ -769,35 +909,66 @@ class _AnnotationPageState extends State<AnnotationPage> {
               child: Column(
                 children: [
                   Padding(
-                    padding: const EdgeInsets.all(16.0),
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        const Text("Layers", style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-                        IconButton(
-                          icon: const Icon(Icons.add, color: Colors.blueAccent),
-                          onPressed: () {
-                            _addNewLayer();
-                            setModalState(() {});
-                            setState(() {});
-                          },
+                        const Text("Layers", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+
+                        // --- UPDATED BUTTONS ROW ---
+                        Row(
+                          children: [
+                            // RESET BUTTON
+                            TextButton.icon(
+                              onPressed: () => _confirmResetAllAnnotations(setModalState),
+                              style: TextButton.styleFrom(
+                                foregroundColor: Colors.redAccent,
+                                padding: const EdgeInsets.symmetric(horizontal: 8),
+                              ),
+                              icon: const Icon(Icons.delete_forever, size: 20),
+                              label: const Text("Reset", style: TextStyle(fontSize: 13)),
+                            ),
+
+                            const SizedBox(width: 8),
+
+                            // ADD LAYER BUTTON
+                            IconButton(
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                              icon: const Icon(Icons.add_circle, color: Colors.blueAccent, size: 28),
+                              onPressed: () {
+                                _addNewLayer();
+                                setModalState(() {});
+                                setState(() {});
+                              },
+                            ),
+                          ],
                         )
+                        // ---------------------------
                       ],
                     ),
                   ),
                   const Divider(color: Colors.grey, height: 1),
+
                   Expanded(
                     child: FutureBuilder<List<Map<String, dynamic>>>(
+                      // Ensure MetadataService is imported or defined
                       future: MetadataService.getLabels(widget.projectName),
                       builder: (context, snapshot) {
                         if (snapshot.connectionState == ConnectionState.waiting) return const Center(child: CircularProgressIndicator());
                         final availableLabels = snapshot.data ?? [];
 
+                        if (_layers.isEmpty) {
+                          return const Center(child: Text("No Layers", style: TextStyle(color: Colors.white54)));
+                        }
+
                         return ListView.builder(
                           itemCount: _layers.length,
                           itemBuilder: (context, index) {
+                            // ... (Your existing ListView.builder logic remains exactly the same)
                             final layer = _layers[index];
                             final isActive = index == _activeLayerIndex;
+                            final isLocked = layer.isLocked;
 
                             return GestureDetector(
                               onTap: () {
@@ -806,8 +977,8 @@ class _AnnotationPageState extends State<AnnotationPage> {
                                 setState(() {});
                               },
                               child: Container(
-                                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                                padding: const EdgeInsets.only(left: 8, top: 8, bottom: 8),
+                                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                                 decoration: BoxDecoration(
                                   color: Colors.transparent,
                                   borderRadius: BorderRadius.circular(8),
@@ -818,9 +989,12 @@ class _AnnotationPageState extends State<AnnotationPage> {
                                 child: Row(
                                   children: [
                                     IconButton(
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(),
                                       icon: Icon(
                                         layer.isVisible ? Icons.visibility : Icons.visibility_off,
                                         color: layer.isVisible ? Colors.white : Colors.grey,
+                                        size: 20,
                                       ),
                                       onPressed: () {
                                         _toggleLayerVisibility(index);
@@ -828,8 +1002,11 @@ class _AnnotationPageState extends State<AnnotationPage> {
                                         setState(() {});
                                       },
                                     ),
+
+                                    const SizedBox(width: 8),
+
                                     Container(
-                                      width: 50, height: 50,
+                                      width: 40, height: 40,
                                       decoration: BoxDecoration(
                                           color: Colors.transparent,
                                           border: Border.all(color: Colors.white)
@@ -838,48 +1015,75 @@ class _AnnotationPageState extends State<AnnotationPage> {
                                           ? RawImage(image: layer.thumbnail!)
                                           : null,
                                     ),
-                                    const SizedBox(width: 12),
+                                    const SizedBox(width: 10),
+
                                     Expanded(
                                       child: Column(
                                         crossAxisAlignment: CrossAxisAlignment.start,
                                         children: [
-                                          Text(layer.name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                                          const SizedBox(height: 4),
-                                          DropdownButtonHideUnderline(
-                                            child: DropdownButton<String>(
-                                              isDense: true,
-                                              dropdownColor: const Color(0xFF333333),
-                                              hint: const Text("Select Label", style: TextStyle(color: Colors.grey, fontSize: 12)),
-                                              value: layer.labelName,
-                                              icon: const Icon(Icons.arrow_drop_down, color: Colors.grey),
-                                              items: availableLabels.map((labelMap) {
-                                                return DropdownMenuItem<String>(
-                                                  value: labelMap['name'],
-                                                  child: Row(
-                                                    children: [
-                                                      Icon(Icons.circle, color: Color(labelMap['color']), size: 12),
-                                                      const SizedBox(width: 8),
-                                                      Text(labelMap['name'], style: const TextStyle(color: Colors.white, fontSize: 14)),
-                                                    ],
-                                                  ),
-                                                );
-                                              }).toList(),
-                                              onChanged: (val) {
-                                                if (val != null) {
-                                                  final selectedLabel = availableLabels.firstWhere((l) => l['name'] == val);
-                                                  _updateLayerLabel(index, val, selectedLabel['color']);
-                                                  setModalState(() {});
-                                                }
-                                              },
+                                          Text(
+                                              layer.name,
+                                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13)
+                                          ),
+                                          const SizedBox(height: 2),
+
+                                          Opacity(
+                                            opacity: isLocked ? 0.5 : 1.0,
+                                            child: IgnorePointer(
+                                              ignoring: isLocked,
+                                              child: DropdownButtonHideUnderline(
+                                                child: DropdownButton<String>(
+                                                  isDense: true,
+                                                  dropdownColor: const Color(0xFF333333),
+                                                  hint: const Text("Select Label", style: TextStyle(color: Colors.grey, fontSize: 11)),
+                                                  value: layer.labelName,
+                                                  icon: const Icon(Icons.arrow_drop_down, color: Colors.grey, size: 18),
+                                                  items: availableLabels.map((labelMap) {
+                                                    return DropdownMenuItem<String>(
+                                                      value: labelMap['name'],
+                                                      child: Row(
+                                                        children: [
+                                                          Icon(Icons.circle, color: Color(labelMap['color']), size: 10),
+                                                          const SizedBox(width: 6),
+                                                          Text(labelMap['name'], style: const TextStyle(color: Colors.white, fontSize: 12)),
+                                                        ],
+                                                      ),
+                                                    );
+                                                  }).toList(),
+                                                  onChanged: (val) {
+                                                    if (val != null) {
+                                                      final selectedLabel = availableLabels.firstWhere((l) => l['name'] == val);
+                                                      _updateLayerLabel(index, val, selectedLabel['color']);
+                                                      setModalState(() {});
+                                                    }
+                                                  },
+                                                ),
+                                              ),
                                             ),
                                           ),
                                         ],
                                       ),
                                     ),
-                                    if (isActive) const Icon(Icons.check, color: Colors.blueAccent),
+
+                                    if (isActive) const Icon(Icons.check, color: Colors.blueAccent, size: 16),
+
+                                    IconButton(
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(),
+                                      icon: Icon(
+                                        isLocked ? Icons.lock : Icons.lock_open,
+                                        color: isLocked ? Colors.orangeAccent : Colors.grey,
+                                        size: 18,
+                                      ),
+                                      onPressed: () {
+                                        _toggleLayerLock(index);
+                                        setModalState(() {});
+                                        setState(() {});
+                                      },
+                                    ),
 
                                     PopupMenuButton<String>(
-                                      icon: const Icon(Icons.more_vert, color: Colors.white),
+                                      padding: EdgeInsets.zero,
                                       color: const Color(0xFF333333),
                                       onSelected: (value) {
                                         if (value == 'clear') {
@@ -891,27 +1095,35 @@ class _AnnotationPageState extends State<AnnotationPage> {
                                         setState(() {});
                                       },
                                       itemBuilder: (BuildContext context) => [
-                                        const PopupMenuItem(
+                                        PopupMenuItem(
                                           value: 'clear',
+                                          enabled: !isLocked,
+                                          height: 32,
                                           child: Row(
                                             children: [
-                                              Icon(Icons.cleaning_services, color: Colors.white, size: 20),
-                                              SizedBox(width: 10),
-                                              Text('Clear Paint', style: TextStyle(color: Colors.white)),
+                                              Icon(Icons.cleaning_services, color: isLocked ? Colors.grey : Colors.white, size: 16),
+                                              const SizedBox(width: 10),
+                                              Text('Clear', style: TextStyle(color: isLocked ? Colors.grey : Colors.white, fontSize: 13)),
                                             ],
                                           ),
                                         ),
-                                        const PopupMenuItem(
+                                        PopupMenuItem(
                                           value: 'delete',
+                                          enabled: !isLocked,
+                                          height: 32,
                                           child: Row(
                                             children: [
-                                              Icon(Icons.delete, color: Colors.redAccent, size: 20),
-                                              SizedBox(width: 10),
-                                              Text('Delete Layer', style: TextStyle(color: Colors.redAccent)),
+                                              Icon(Icons.delete, color: isLocked ? Colors.grey : Colors.redAccent, size: 16),
+                                              const SizedBox(width: 10),
+                                              Text('Delete', style: TextStyle(color: isLocked ? Colors.grey : Colors.redAccent, fontSize: 13)),
                                             ],
                                           ),
                                         ),
                                       ],
+                                      child: const Padding(
+                                        padding: EdgeInsets.only(left: 8.0, top: 4, bottom: 4),
+                                        child: Icon(Icons.more_vert, color: Colors.white, size: 20),
+                                      ),
                                     ),
                                   ],
                                 ),

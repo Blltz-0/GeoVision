@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../pages/project_container.dart'; // Updated import to match your file structure
+import '../pages/project_container.dart';
 import '../functions/metadata_handle.dart';
 
 class ProjectList extends StatelessWidget {
@@ -33,12 +33,11 @@ class ProjectList extends StatelessWidget {
       itemCount: dataList.length,
       itemBuilder: (context, index) {
         final item = dataList[index];
-        // Extract type (default to classification if missing)
         final String type = item['type'] ?? 'classification';
 
         return _ProjectListItem(
           title: item["title"],
-          type: type, // Pass type to the item
+          type: type,
           onReturn: onRefresh,
         );
       },
@@ -48,38 +47,47 @@ class ProjectList extends StatelessWidget {
 
 class _ProjectListItem extends StatelessWidget {
   final String title;
-  final String type; // Added type
+  final String type;
   final VoidCallback onReturn;
 
   const _ProjectListItem({
     required this.title,
-    required this.type, // Added type
+    required this.type,
     required this.onReturn,
   });
 
   Future<Map<String, int>> _fetchProjectStats() async {
+    // 1. UPDATED: Fetch 'Labels' for segmentation, 'Classes' for classification
+    final tagsFuture = type == 'segmentation'
+        ? MetadataService.getLabels(title)
+        : MetadataService.getClasses(title);
+
     final results = await Future.wait([
       MetadataService.readCsvData(title),
-      MetadataService.getClasses(title),
+      tagsFuture,
     ]);
 
-    final List<Map<String, dynamic>> images = results[0];
-    final List<dynamic> classes = results[1] as List<dynamic>;
+    final List<Map<String, dynamic>> images = results[0] as List<Map<String, dynamic>>;
+    final List<dynamic> tags = results[1] as List<dynamic>;
 
     return {
       'images': images.length,
-      'classes': classes.length,
+      'classes': tags.length,
     };
   }
 
   @override
   Widget build(BuildContext context) {
-    // 1. Determine UI elements based on Type
     final bool isSegmentation = type == 'segmentation';
 
+    // Main leading icon (Left side)
     final IconData leadingIcon = isSegmentation ? Icons.brush : Icons.grid_view;
-    final Color themeColor = isSegmentation ? Colors.green : Colors.green;
+    final Color themeColor = Colors.green;
     final String labelText = isSegmentation ? "SEGMENTATION" : "CLASSIFICATION";
+
+    // 2. UPDATED: Stats Icon (Bottom row)
+    // Matches the logic in ProjectCard (Category for Seg, Label for Class)
+    final IconData statsIcon = isSegmentation ? Icons.category : Icons.label_outline;
 
     return GestureDetector(
       onTap: () async {
@@ -116,7 +124,7 @@ class _ProjectListItem extends StatelessWidget {
 
             return Row(
               children: [
-                // 2. Dynamic Icon & Color
+                // --- Left Icon ---
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
@@ -128,13 +136,13 @@ class _ProjectListItem extends StatelessWidget {
 
                 const SizedBox(width: 16),
 
-                // 3. Project Name & Type Label
+                // --- Title & Type ---
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        labelText, // Shows "CLASSIFICATION" or "SEGMENTATION"
+                        labelText,
                         style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.bold,
@@ -157,15 +165,15 @@ class _ProjectListItem extends StatelessWidget {
                   ),
                 ),
 
-                // 4. Stats Section (Tags & Images)
+                // --- Stats Row ---
                 Row(
                   children: [
-                    // Classes/Tags Column
-                    _buildStatColumn(Icons.label_outline, classCount.toString(), Colors.orange),
+                    // Dynamic Stats Icon (Category vs Label)
+                    _buildStatColumn(statsIcon, classCount.toString(), Colors.orange),
 
                     const SizedBox(width: 20),
 
-                    // Images Column
+                    // Images Count
                     _buildStatColumn(Icons.image_outlined, imageCount.toString(), Colors.blue),
                   ],
                 ),
