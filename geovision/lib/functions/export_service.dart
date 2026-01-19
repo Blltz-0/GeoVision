@@ -58,13 +58,9 @@ class ExportService {
       List<Map<String, dynamic>> categories = [];
       int nextCatId = 1;
 
-      // REMOVED: classToId['Unclassified'] = 999;
-      // REMOVED: categories.add({"id": 999 ...});
-
       // Add explicit classes
       for (var c in projectClasses) {
         String name = c['name'];
-        // Ensure we don't add "Unclassified" as a valid category
         if (name.toLowerCase() == 'unclassified') continue;
 
         if (!classToId.containsKey(name)) {
@@ -83,7 +79,6 @@ class ExportService {
             List<dynamic> jsonList = jsonDecode(content);
             for (var j in jsonList) {
               String? label = j['labelName'];
-              // Skip Unclassified, null, or empty labels
               if (label != null &&
                   label.isNotEmpty &&
                   label.toLowerCase() != 'unclassified' &&
@@ -128,7 +123,7 @@ class ExportService {
           } catch (_) {}
         }
 
-        // NEW: Skip zero-size images
+        // Skip zero-size images
         if (imgWidth <= 0 || imgHeight <= 0) {
           debugPrint("⚠️ Skipping zero-size or invalid image: $filename");
           continue;
@@ -153,20 +148,16 @@ class ExportService {
             List<AnnotationLayer> layers = jsonList.map((j) => AnnotationLayer.fromJson(j)).toList();
 
             for (var layer in layers) {
-              // 1. Skip invisible or empty layers
               if (!layer.isVisible || layer.strokes.isEmpty) continue;
 
               String labelName = layer.labelName ?? "Unclassified";
 
-              // 2. Skip Unclassified layers (Strict Export)
               if (!classToId.containsKey(labelName)) {
                 debugPrint("⚠️ Skipping unclassified layer on image $filename");
                 continue;
               }
 
               int catId = classToId[labelName]!;
-
-              // Slight delay to prevent UI freeze on large exports
               await Future.delayed(const Duration(milliseconds: 5));
 
               final annotationMap = await CocoConversionService.generateAnnotationForLayer(
@@ -177,30 +168,35 @@ class ExportService {
                 categoryId: catId,
               );
 
-              // 3. Only add if valid (non-null and has segmentation data)
               if (annotationMap != null) {
-                // Double check segmentation isn't empty inside map if needed,
-                // but checking null is usually sufficient from CocoService
                 annotations.add(annotationMap);
               }
             }
           } catch (e) { /* Ignore */ }
         }
-
-        // REMOVED: The block that added a blank annotation with category_id 999
-        // If 'hasPainting' was false, we now simply add NOTHING to annotations.
       }
 
-      // --- 4. WRITE FINAL JSON ---
+      // --- 4. WRITE FINAL JSON (UPDATED) ---
       final fullCocoJson = {
         "info": {
-          "description": projectName,
+          "description": description.isNotEmpty
+              ? description
+              : "$projectName dataset generated using the GeoVisionTagger mobile application.",
           "year": DateTime.now().year,
-          "version": "1.0",
+          "version": "1.0.0",
           "contributor": author,
-          "date_created": DateTime.now().toIso8601String()
+          "date_created": DateTime.now().toIso8601String(),
+          "url": "https://github.com/Blltz-0/GeoVision",
+          "source": "https://github.com/Blltz-0/GeoVision"
         },
-        "licenses": [{"id": 1, "name": "Proprietary", "url": ""}],
+        "licenses": [
+          {
+            "id": 1,
+            // UPDATED LICENSE
+            "name": "CC BY 4.0",
+            "url": "https://creativecommons.org/licenses/by/4.0/"
+          }
+        ],
         "images": images,
         "annotations": annotations,
         "categories": categories
@@ -238,27 +234,21 @@ class ExportService {
 
       // A. Extract Clean Category Names
       List<String> categoryNames = [];
-
-      File sourceFile;
-      if (projectType == 'segmentation') {
-        sourceFile = File('${sourceDir.path}/labels.json');
-      } else {
-        sourceFile = File('${sourceDir.path}/classes.json');
-      }
+      File sourceFile = projectType == 'segmentation'
+          ? File('${sourceDir.path}/labels.json')
+          : File('${sourceDir.path}/classes.json');
 
       if (await sourceFile.exists()) {
         try {
           List<dynamic> list = jsonDecode(await sourceFile.readAsString());
           categoryNames = list.map((e) {
-            if (e is Map) {
-              return e['name']?.toString() ?? "Unknown";
-            }
+            if (e is Map) return e['name']?.toString() ?? "Unknown";
             return e.toString();
           }).toList();
         } catch (_) {}
       }
 
-      // B. Format Date nicely (YYYY-MM-DD HH:MM)
+      // B. Format Date nicely
       final now = DateTime.now();
       final dateStr = "${now.year}-${now.month.toString().padLeft(2,'0')}-${now.day.toString().padLeft(2,'0')} ${now.hour.toString().padLeft(2,'0')}:${now.minute.toString().padLeft(2,'0')}";
 
@@ -277,6 +267,8 @@ class ExportService {
       readmeBuffer.writeln("PROJECT NAME: $projectName");
       readmeBuffer.writeln("GENERATED ON: $dateStr");
       readmeBuffer.writeln("AUTHOR:       $author");
+      readmeBuffer.writeln("SOURCE TOOL:  https://github.com/Blltz-0/GeoVision");
+      readmeBuffer.writeln("DATA LICENSE: CC BY 4.0 (Free to use and modify with attribution)");
       readmeBuffer.writeln("==================================================");
       readmeBuffer.writeln("");
 
@@ -292,11 +284,9 @@ class ExportService {
       if (projectType == 'segmentation') {
         readmeBuffer.writeln("Type: Image Segmentation");
         readmeBuffer.writeln("Format: COCO (Polygon Masks)");
-        readmeBuffer.writeln("");
       } else {
         readmeBuffer.writeln("Type: Image Classification");
         readmeBuffer.writeln("Format: COCO (Categories)");
-        readmeBuffer.writeln("");
       }
       readmeBuffer.writeln("Total Images Exported: ${images.length}");
       readmeBuffer.writeln("");
@@ -316,13 +306,13 @@ class ExportService {
       readmeBuffer.writeln("---------------------------");
       readmeBuffer.writeln("/");
       readmeBuffer.writeln(" ├── _annotations.coco.json");
-      readmeBuffer.writeln(" │    -> The Master Dataset file. Compatible with YOLO, TensorFlow, PyTorch.");
+      readmeBuffer.writeln(" │    -> The Master Dataset file.");
       readmeBuffer.writeln(" │");
       readmeBuffer.writeln(" ├── project_data.csv");
       readmeBuffer.writeln(" │    -> Contains raw metadata: GPS coordinates, Timestamps, and file paths.");
       readmeBuffer.writeln(" │");
       readmeBuffer.writeln(" ├── map_overview_X.png");
-      readmeBuffer.writeln(" │    -> Visual map clusters showing where images were taken.");
+      readmeBuffer.writeln(" │    -> Visual heatmap clusters showing where images were taken.");
       readmeBuffer.writeln(" │");
       readmeBuffer.writeln(" ├── images/");
       readmeBuffer.writeln(" │    -> Contains all the source images.");
@@ -330,7 +320,7 @@ class ExportService {
       if (includeAnnotationFolder) {
         readmeBuffer.writeln(" │");
         readmeBuffer.writeln(" └── annotation/");
-        readmeBuffer.writeln("      -> Contains visual segmentation masks (PNG/JPG) for quick preview.");
+        readmeBuffer.writeln("      -> Contains visual segmentation masks (PNG) for quick preview.");
       }
 
       readmeBuffer.writeln("");

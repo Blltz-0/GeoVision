@@ -39,8 +39,8 @@ class AboutPage extends StatelessWidget {
             // Description
             const Text(
               'GeoVision is a specialized tool designed for field data collection, '
-                  'image classification, and segmentation. Easily capture geotagged '
-                  'images, annotate data, and export your projects for analysis.',
+              'image classification, and segmentation. Easily capture geotagged '
+              'images, annotate data, and export your projects for analysis.',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 16, height: 1.5),
             ),
@@ -53,7 +53,9 @@ class AboutPage extends StatelessWidget {
             const SizedBox(height: 10),
             _buildInfoRow(Icons.email, 'Contact', ['reolegio.l@gmail.com']),
             const SizedBox(height: 10),
-            _buildInfoRow(Icons.copyright, 'License', ['MIT License']),
+            _buildInfoRow(Icons.copyright, 'License', ['CC BY-ND 4.0']),
+            const SizedBox(height: 10),
+            _buildInfoRow(Icons.copyright, 'Software', ['https://github.com/Blltz-0/GeoVision']),
 
             const SizedBox(height: 40),
             const Text(
