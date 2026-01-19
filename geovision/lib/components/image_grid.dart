@@ -143,7 +143,7 @@ class SliverImageGrid extends StatelessWidget {
                 color: Colors.grey[200],
                 border: isSelected
                     ? Border.all(color: Colors.blueAccent, width: 3)
-                    : Border.all(color: Colors.white.withOpacity(0.1), width: 0.5),
+                    : Border.all(color: Colors.white.withValues(alpha: 0.1), width: 0.5),
               ),
               clipBehavior: Clip.hardEdge,
               child: Stack(
@@ -199,7 +199,7 @@ class SliverImageGrid extends StatelessWidget {
                       child: Container(
                         padding: const EdgeInsets.all(4),
                         decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.6),
+                          color: Colors.black.withValues(alpha:0.6),
                           shape: BoxShape.circle,
                           border: Border.all(color: Colors.lightGreenAccent, width: 1),
                         ),

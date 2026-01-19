@@ -67,7 +67,7 @@ class _ProjectListItem extends StatelessWidget {
       tagsFuture,
     ]);
 
-    final List<Map<String, dynamic>> images = results[0] as List<Map<String, dynamic>>;
+    final List<Map<String, dynamic>> images = results[0];
     final List<dynamic> tags = results[1] as List<dynamic>;
 
     return {

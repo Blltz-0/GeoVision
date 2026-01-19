@@ -11,8 +11,8 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:geovision/components/class_selector_dropdown.dart';
 import '../../components/class_creator.dart';
 import '../../components/image_grid.dart';
-import '../../functions/metadata_handle.dart';
 import '../../functions/camera/image_processor.dart';
+import '../../functions/metadata_handle.dart';
 
 class ImagesPage extends StatefulWidget {
   final String projectName;
@@ -316,7 +316,7 @@ class _ImagesPageState extends State<ImagesPage> {
     while (true) {
       List<dynamic> classes = await MetadataService.getClasses(widget.projectName);
       if (!classes.any((c) => c['name'] == "Unclassified")) {
-        classes.insert(0, {'name': 'Unclassified', 'color': Colors.grey.value});
+        classes.insert(0, {'name': 'Unclassified', 'color': Colors.grey.toARGB32()});
       }
       if (!mounted) return null;
 
@@ -398,11 +398,11 @@ class _ImagesPageState extends State<ImagesPage> {
                 isDropdownOpen = true;
                 setStateDialog(() {});
               }
-              final selectedClassData = classes.firstWhere((c) => c['name'] == currentSelection, orElse: () => {'color': Colors.grey.value});
+              final selectedClassData = classes.firstWhere((c) => c['name'] == currentSelection, orElse: () => {'color': Colors.grey.toARGB32()});
               Color selectedColor = Color(selectedClassData['color']);
 
               return PopScope(
-                onPopInvokedWithResult: (_, __) => closeDropdown(),
+                onPopInvokedWithResult: (_, _) => closeDropdown(),
                 child: AlertDialog(
                   title: const Text("Assign Class"),
                   contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
@@ -436,7 +436,7 @@ class _ImagesPageState extends State<ImagesPage> {
                           const SizedBox(width: 10),
                           Container(
                             height: 48, width: 48,
-                            decoration: BoxDecoration(color: Colors.blue.withOpacity(0.1), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.blue.withOpacity(0.3))),
+                            decoration: BoxDecoration(color: Colors.blue.withValues(alpha:0.1), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.blue.withValues(alpha:0.3))),
                             child: IconButton(
                               icon: const Icon(Icons.add, color: Colors.blue),
                               onPressed: () {
@@ -472,123 +472,23 @@ class _ImagesPageState extends State<ImagesPage> {
   }
 
   // --- IMPORT LOGIC ---
-
-  Future<void> _importImage() async {
-    if (_isUploading) return;
-    if (Platform.isAndroid) {
-      if (await Permission.photos.request().isDenied) return;
-    }
-
-    final ImagePicker picker = ImagePicker();
-    final List<XFile> pickedFiles = await picker.pickMultiImage();
-    if (pickedFiles.isEmpty) return;
-
-    // Load History
-    Map<String, dynamic> history = await _loadUploadHistory();
-    List<XFile> filesToProcess = [];
-    List<String> duplicateNames = [];
-
-    // --- SMART DUPLICATE CHECK ---
-    for (var file in pickedFiles) {
-      int fileSize = await file.length();
-      bool isDuplicate = false;
-
-      for (var entry in history.values) {
-        if (entry is Map) {
-          if (entry['originalName'] == file.name && entry['size'] == fileSize) {
-            isDuplicate = true;
-            break;
-          }
-        } else if (entry is String) {
-          if (entry == file.name) {
-            isDuplicate = true;
-            break;
-          }
-        }
-      }
-
-      if (isDuplicate) {
-        duplicateNames.add(file.name);
-      } else {
-        filesToProcess.add(file);
-      }
-    }
-
-    if (duplicateNames.isNotEmpty && mounted) {
-      bool? uploadDuplicates = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          title: const Text("Duplicate Files Detected"),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text("${duplicateNames.length} image(s) match existing files (Same Name & Size)."),
-                const SizedBox(height: 10),
-                Container(
-                  constraints: const BoxConstraints(maxHeight: 150),
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(color: Colors.grey[200], borderRadius: BorderRadius.circular(5)),
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: duplicateNames.length,
-                    itemBuilder: (context, index) => Text(duplicateNames[index], style: const TextStyle(fontSize: 12)),
-                  ),
-                ),
-                const SizedBox(height: 15),
-                const Text("Upload them anyway?", style: TextStyle(color: Colors.black54)),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text("Skip Duplicates"),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text("Upload Anyway"),
-            ),
-          ],
-        ),
-      );
-
-      if (uploadDuplicates == true) {
-        final duplicatesToUpload = pickedFiles.where((f) => duplicateNames.contains(f.name));
-        filesToProcess.addAll(duplicatesToUpload);
-      }
-    }
-
-    if (filesToProcess.isEmpty) return;
-
-    String targetClass = "Unclassified";
-    if (widget.projectType == 'classification') {
-      String? selected = await _handleClassSelectionFlow();
-      if (selected == null) return;
-      targetClass = selected;
-    } else {
-      if (_filterClass != "All") targetClass = _filterClass;
-    }
-
-    setState(() {
-      _isUploading = true;
-      _totalUploads = filesToProcess.length;
-      _currentUploadCount = 0;
-      _tempUploadedImages.clear();
-    });
-
-    _processBatchBackground(filesToProcess, targetClass, history);
-  }
-
   Future<void> _processBatchBackground(
       List<XFile> files, String targetClass, Map<String, dynamic> history) async {
     try {
+      // Use a list to track specific filenames
+      List<String> skippedFiles = [];
+
       for (final file in files) {
         try {
-          int size = await file.length();
-          String newPath = await _processSingleImport(file, targetClass);
+          String? newPath = await _processSingleImport(file, targetClass);
+
+          // If null, the image was skipped (too small)
+          if (newPath == null) {
+            skippedFiles.add(file.name);
+            continue;
+          }
+
+          int size = await File(newPath).length();
           String newFilename = newPath.split(Platform.pathSeparator).last;
 
           history[newFilename] = {
@@ -605,35 +505,67 @@ class _ImagesPageState extends State<ImagesPage> {
           }
         } catch (e) {
           debugPrint("Failed to import ${file.name}: $e");
+          skippedFiles.add("${file.name} (Error)");
         }
       }
 
       await _saveUploadHistory(history);
 
       if (mounted) {
+        // 1. Show Success Message
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Imported $_currentUploadCount images")),
+          SnackBar(content: Text("Imported $_currentUploadCount images.")),
         );
+
+        // 2. Show Skipped Files Dialog (if any)
+        if (skippedFiles.isNotEmpty) {
+          _showSkippedFilesDialog(skippedFiles);
+        }
+
         widget.onDataChanged?.call();
-        setState(() { _isUploading = false; _tempUploadedImages.clear(); });
+        setState(() {
+          _isUploading = false;
+          _tempUploadedImages.clear();
+        });
       }
     } catch (e) {
       if (mounted) setState(() => _isUploading = false);
     }
   }
 
-  Future<String> _processSingleImport(XFile file, String targetClass) async {
+  Future<String?> _processSingleImport(XFile file, String targetClass) async {
     final appDir = await getApplicationDocumentsDirectory();
     final projectDir = Directory('${appDir.path}/projects/${widget.projectName}/images');
     if (!await projectDir.exists()) await projectDir.create(recursive: true);
+
     final String fileName = await MetadataService.generateNextFileName(
         projectDir, widget.projectName, targetClass, projectType: widget.projectType
     );
     final String newPath = '${projectDir.path}/$fileName';
+
+    // 1. Copy the file to the project folder
     await File(file.path).copy(newPath);
 
-    await FileImage(File(newPath)).evict();
-    await ResizeImage(FileImage(File(newPath)), width: 300).evict();
+    // 2. Try to pad/resize it
+    // If this returns null, the image is too small
+    String? processedPath = await padToSquare(newPath);
+
+    if (processedPath == null) {
+      try {
+        // Delete the file just copied, otherwise it stays in the folder forever
+        await File(newPath).delete();
+      } catch (e) {
+        debugPrint("Error deleting invalid file: $e");
+      }
+      return null; // Stop here, do not save metadata
+    }
+
+    // 3. Update 'newPath' to the returned path (in case it changed from .jpg to .png)
+    final String finalPath = processedPath;
+
+    // 4. Continue with metadata...
+    await FileImage(File(finalPath)).evict();
+    await ResizeImage(FileImage(File(finalPath)), width: 300).evict();
 
     Position? importedPosition;
     try {
@@ -649,12 +581,61 @@ class _ImagesPageState extends State<ImagesPage> {
     } catch (_) {}
 
     await MetadataService.embedMetadata(
-      filePath: newPath, lat: importedPosition?.latitude ?? 0.0, lng: importedPosition?.longitude ?? 0.0, className: targetClass,
+      filePath: finalPath, lat: importedPosition?.latitude ?? 0.0, lng: importedPosition?.longitude ?? 0.0, className: targetClass,
     );
     await MetadataService.saveToCsv(
-      projectName: widget.projectName, imagePath: newPath, position: importedPosition, className: targetClass, projectType: widget.projectType,
+      projectName: widget.projectName, imagePath: finalPath, position: importedPosition, className: targetClass, projectType: widget.projectType,
     );
-    return newPath;
+
+    return finalPath;
+  }
+
+  void _showSkippedFilesDialog(List<String> fileNames) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Files Skipped"),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "The following images were too small (<200px) and were not uploaded:",
+              style: TextStyle(fontSize: 13, color: Colors.grey),
+            ),
+            const SizedBox(height: 10),
+            Container(
+              height: 150,
+              width: double.maxFinite,
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.shade300),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: ListView.builder(
+                shrinkWrap: true,
+                itemCount: fileNames.length,
+                itemBuilder: (context, index) {
+                  return ListTile(
+                    dense: true,
+                    title: Text(
+                      fileNames[index],
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
+                    leading: const Icon(Icons.warning, color: Colors.orange, size: 16),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("OK"),
+          ),
+        ],
+      ),
+    );
   }
 
   // --- BUILD UI ---
@@ -694,8 +675,11 @@ class _ImagesPageState extends State<ImagesPage> {
           child: InkWell(
             onTap: () {
               setState(() {
-                if (isExpanded) _collapsedClasses.add(className);
-                else _collapsedClasses.remove(className);
+                if (isExpanded) {
+                  _collapsedClasses.add(className);
+                } else {
+                  _collapsedClasses.remove(className);
+                }
               });
             },
             child: Container(
@@ -790,7 +774,9 @@ class _ImagesPageState extends State<ImagesPage> {
       // Check specific permissions based on Android version if needed
       // Usually photos or storage
       if (await Permission.photos.request().isDenied &&
-          await Permission.storage.request().isDenied) return;
+          await Permission.storage.request().isDenied) {
+        return;
+      }
     }
 
     final ImagePicker picker = ImagePicker();
@@ -1002,8 +988,8 @@ class _ImagesPageState extends State<ImagesPage> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
-                color: Colors.blue.withOpacity(0.1),
-                border: Border(bottom: BorderSide(color: Colors.blue.withOpacity(0.2))),
+                color: Colors.blue.withValues(alpha: 0.1),
+                border: Border(bottom: BorderSide(color: Colors.blue.withValues(alpha: 0.2))),
               ),
               child: SafeArea(
                 top: false, bottom: false,

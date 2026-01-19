@@ -455,6 +455,7 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
               controller: controller,
               decoration: InputDecoration(hintText: widget.projectName, border: const OutlineInputBorder()),
             ),
+            Text("Type the Project Name to Confirm", style: TextStyle(color: Colors.grey[600], fontSize: 13)),
           ],
         ),
         actions: [

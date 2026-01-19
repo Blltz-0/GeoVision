@@ -7,9 +7,9 @@ import 'package:permission_handler/permission_handler.dart';
 // COMPONENT IMPORTS
 import '../components/project_card.dart';
 import '../components/project_list.dart';
+import 'home_add.dart';
 import 'home_tabs/about.dart';
 import 'home_tabs/help.dart';
-import 'project_container.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -120,95 +120,10 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  Future<bool> _createFolder(String folderName, String projectType) async {
-    final projectsPath = await _getAppPath();
-    final newProjectDir = Directory('$projectsPath/$folderName');
-    final imagesSubDir = Directory('$projectsPath/$folderName/images');
-    final typeFile = File('$projectsPath/$folderName/project_type.txt');
-    final lastOpenedFile = File('$projectsPath/$folderName/last_opened.txt');
-
-    if (await newProjectDir.exists()) {
-      return false;
-    } else {
-      await newProjectDir.create();
-      await imagesSubDir.create();
-      await typeFile.writeAsString(projectType);
-      await lastOpenedFile.writeAsString(DateTime.now().toIso8601String());
-      _loadFolders();
-      return true;
-    }
-  }
-
   IconData _getIconForType(String type) {
     return type == 'segmentation' ? Icons.brush : Icons.grid_view;
   }
 
-  void _showCreateDialog() {
-    final controller = TextEditingController();
-    String selectedType = 'classification';
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: const Text("New Project"),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextField(
-                    controller: controller,
-                    decoration: const InputDecoration(hintText: "Project Name"),
-                    textInputAction: TextInputAction.done,
-                    autofocus: true,
-                  ),
-                  const SizedBox(height: 20),
-                  DropdownButtonFormField<String>(
-                    initialValue: selectedType,
-                    decoration: const InputDecoration(labelText: "Project Mode", border: OutlineInputBorder()),
-                    items: const [
-                      DropdownMenuItem(value: 'classification', child: Text("Image Classification")),
-                      DropdownMenuItem(value: 'segmentation', child: Text("Segmentation")),
-                    ],
-                    onChanged: (value) => setState(() => selectedType = value!),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(context), child: const Text("Cancel")),
-                ElevatedButton(
-                  onPressed: () async {
-                    if (controller.text.isNotEmpty) {
-                      bool success = await _createFolder(controller.text, selectedType);
-                      if (!context.mounted) return;
-
-                      if (success) {
-                        Navigator.pop(context);
-                        await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) => ProjectContainerPage(projectName: controller.text),
-                          ),
-                        );
-                        _loadFolders();
-                      } else {
-                        Navigator.pop(context);
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text("Error: That project name already exists!"), backgroundColor: Colors.red),
-                        );
-                      }
-                    }
-                  },
-                  child: const Text("Create"),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
 
   // 2. ADDED: Helper widget for filter buttons
   Widget _buildFilterBtn(IconData icon, String value, String tooltip) {
@@ -224,7 +139,7 @@ class _HomePageState extends State<HomePage> {
             color: isSelected ? Colors.white : Colors.transparent,
             shape: BoxShape.circle,
             boxShadow: isSelected
-                ? [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 4, offset: const Offset(0, 2))]
+                ? [BoxShadow(color: Colors.black.withValues(alpha: 0.1), blurRadius: 4, offset: const Offset(0, 2))]
                 : [],
           ),
           child: Icon(
@@ -292,7 +207,15 @@ class _HomePageState extends State<HomePage> {
                           child: Row(
                             children: [
                               GestureDetector(
-                                onTap: _showCreateDialog,
+                                onTap: () async {
+                        // Navigate to the project creation
+                        await Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (context) => const HomeAddPage())
+                        );
+                        // Refresh list when returning
+                        _loadFolders();
+                        },
                                 child: Container(
                                   height: 90, width: 90,
                                   decoration: BoxDecoration(
