@@ -53,7 +53,7 @@ class ExportService {
         description = (await descFile.readAsString()).trim();
       }
 
-      // --- 2a. INITIALIZE CATEGORY MAP ---
+      // --- 2. INITIALIZE CATEGORIES ---
       Map<String, int> classToId = {};
       List<Map<String, dynamic>> categories = [];
       int nextCatId = 1;
@@ -67,29 +67,6 @@ class ExportService {
           classToId[name] = nextCatId;
           categories.add({"id": nextCatId, "name": name, "supercategory": "object"});
           nextCatId++;
-        }
-      }
-
-      // --- 2b. DYNAMIC CLASS DISCOVERY ---
-      if (await annotationDir.exists()) {
-        final annotationFiles = annotationDir.listSync().whereType<File>().where((f) => f.path.endsWith('_data.json'));
-        for (var file in annotationFiles) {
-          try {
-            String content = await file.readAsString();
-            List<dynamic> jsonList = jsonDecode(content);
-            for (var j in jsonList) {
-              String? label = j['labelName'];
-              if (label != null &&
-                  label.isNotEmpty &&
-                  label.toLowerCase() != 'unclassified' &&
-                  !classToId.containsKey(label)) {
-
-                classToId[label] = nextCatId;
-                categories.add({"id": nextCatId, "name": label, "supercategory": "object"});
-                nextCatId++;
-              }
-            }
-          } catch (e) { /* Ignore */ }
         }
       }
 
@@ -137,46 +114,78 @@ class ExportService {
           "date_captured": row['time'] ?? ""
         });
 
-        // --- PROCESSING ANNOTATIONS ---
-        String baseName = filename.split('.').first;
-        File layerFile = File('${annotationDir.path}/${baseName}_data.json');
+        // ============================================================
+        // BRANCH: CLASSIFICATION MODE
+        // ============================================================
+        if (projectType == 'classification') {
+          String? label = row['class']?.toString();
 
-        if (await layerFile.exists()) {
-          try {
-            String content = await layerFile.readAsString();
-            List<dynamic> jsonList = jsonDecode(content);
-            List<AnnotationLayer> layers = jsonList.map((j) => AnnotationLayer.fromJson(j)).toList();
-
-            for (var layer in layers) {
-              if (!layer.isVisible || layer.strokes.isEmpty) continue;
-
-              String labelName = layer.labelName ?? "Unclassified";
-
-              if (!classToId.containsKey(labelName)) {
-                debugPrint("⚠️ Skipping unclassified layer on image $filename");
-                continue;
-              }
-
-              int catId = classToId[labelName]!;
-              await Future.delayed(const Duration(milliseconds: 5));
-
-              final annotationMap = await CocoConversionService.generateAnnotationForLayer(
-                layer: layer,
-                imageSize: imageSize,
-                imageId: imageId,
-                annotationId: annotationIdCounter++,
-                categoryId: catId,
-              );
-
-              if (annotationMap != null) {
-                annotations.add(annotationMap);
-              }
+          if (label != null && label.isNotEmpty && label != "Unclassified") {
+            if (!classToId.containsKey(label)) {
+              classToId[label] = nextCatId;
+              categories.add({"id": nextCatId, "name": label, "supercategory": "object"});
+              nextCatId++;
             }
-          } catch (e) { /* Ignore */ }
+
+            int catId = classToId[label]!;
+
+            // Full Image BBox for Classification
+            annotations.add({
+              "id": annotationIdCounter++,
+              "image_id": imageId,
+              "category_id": catId,
+              "bbox": [0, 0, imgWidth, imgHeight],
+              "area": imgWidth * imgHeight,
+              "segmentation": [],
+              "iscrowd": 0
+            });
+          }
+        }
+        // ============================================================
+        // BRANCH: SEGMENTATION MODE
+        // ============================================================
+        else {
+          String baseName = filename.split('.').first;
+          File layerFile = File('${annotationDir.path}/${baseName}_data.json');
+
+          if (await layerFile.exists()) {
+            try {
+              String content = await layerFile.readAsString();
+              List<dynamic> jsonList = jsonDecode(content);
+              List<AnnotationLayer> layers = jsonList.map((j) => AnnotationLayer.fromJson(j)).toList();
+
+              for (var layer in layers) {
+                if (!layer.isVisible || layer.strokes.isEmpty) continue;
+
+                String labelName = layer.labelName ?? "Unclassified";
+
+                if (!classToId.containsKey(labelName)) {
+                  classToId[labelName] = nextCatId;
+                  categories.add({"id": nextCatId, "name": labelName, "supercategory": "object"});
+                  nextCatId++;
+                }
+
+                int catId = classToId[labelName]!;
+                await Future.delayed(const Duration(milliseconds: 5));
+
+                final annotationMap = await CocoConversionService.generateAnnotationForLayer(
+                  layer: layer,
+                  imageSize: imageSize,
+                  imageId: imageId,
+                  annotationId: annotationIdCounter++,
+                  categoryId: catId,
+                );
+
+                if (annotationMap != null) {
+                  annotations.add(annotationMap);
+                }
+              }
+            } catch (e) { /* Ignore */ }
+          }
         }
       }
 
-      // --- 4. WRITE FINAL JSON (UPDATED) ---
+      // --- 4. WRITE FINAL JSON ---
       final fullCocoJson = {
         "info": {
           "description": description.isNotEmpty
@@ -192,7 +201,6 @@ class ExportService {
         "licenses": [
           {
             "id": 1,
-            // UPDATED LICENSE
             "name": "CC BY 4.0",
             "url": "https://creativecommons.org/licenses/by/4.0/"
           }
@@ -207,6 +215,7 @@ class ExportService {
       tempFiles.add(cocoFile);
 
       // --- 5. GENERATE MAPS ---
+      // We explicitly create files named 'map_overview_X.png'
       List<Map<String, double>> points = [];
       for (var row in csvData) {
         double lat = double.tryParse(row['lat'].toString()) ?? 0.0;
@@ -231,39 +240,11 @@ class ExportService {
       // --- 6. CREATE README.txt ---
       debugPrint("📄 Generating README...");
       final readmeFile = File('${sourceDir.path}/README.txt');
-
-      // A. Extract Clean Category Names
-      List<String> categoryNames = [];
-      File sourceFile = projectType == 'segmentation'
-          ? File('${sourceDir.path}/labels.json')
-          : File('${sourceDir.path}/classes.json');
-
-      if (await sourceFile.exists()) {
-        try {
-          List<dynamic> list = jsonDecode(await sourceFile.readAsString());
-          categoryNames = list.map((e) {
-            if (e is Map) return e['name']?.toString() ?? "Unknown";
-            return e.toString();
-          }).toList();
-        } catch (_) {}
-      }
-
-      // B. Format Date nicely
+      List<String> categoryNames = categories.map((e) => e['name'].toString()).toList();
       final now = DateTime.now();
       final dateStr = "${now.year}-${now.month.toString().padLeft(2,'0')}-${now.day.toString().padLeft(2,'0')} ${now.hour.toString().padLeft(2,'0')}:${now.minute.toString().padLeft(2,'0')}";
 
-      // C. Check Annotation Folder
-      bool includeAnnotationFolder = false;
-      if (await annotationDir.exists()) {
-        final entities = annotationDir.listSync();
-        if (entities.any((e) => e is File && !e.path.toLowerCase().endsWith('.json'))) {
-          includeAnnotationFolder = true;
-        }
-      }
-
-      // D. Build Content
       final StringBuffer readmeBuffer = StringBuffer();
-
       readmeBuffer.writeln("PROJECT NAME: $projectName");
       readmeBuffer.writeln("GENERATED ON: $dateStr");
       readmeBuffer.writeln("AUTHOR:       $author");
@@ -286,52 +267,29 @@ class ExportService {
         readmeBuffer.writeln("Format: COCO (Polygon Masks)");
       } else {
         readmeBuffer.writeln("Type: Image Classification");
-        readmeBuffer.writeln("Format: COCO (Categories)");
+        readmeBuffer.writeln("Format: COCO (Full-Image Bounding Boxes)");
       }
       readmeBuffer.writeln("Total Images Exported: ${images.length}");
       readmeBuffer.writeln("");
 
-      readmeBuffer.writeln("DEFINED CATEGORIES (${categoryNames.length})");
-      readmeBuffer.writeln("----------------------");
-      if (categoryNames.isEmpty) {
-        readmeBuffer.writeln("(No explicit categories defined. Using dynamic labels.)");
-      } else {
-        for (var name in categoryNames) {
-          readmeBuffer.writeln("- $name");
-        }
-      }
-      readmeBuffer.writeln("");
-
-      readmeBuffer.writeln("DIRECTORY STRUCTURE & GUIDE");
-      readmeBuffer.writeln("---------------------------");
+      readmeBuffer.writeln("DIRECTORY STRUCTURE");
+      readmeBuffer.writeln("-------------------");
       readmeBuffer.writeln("/");
       readmeBuffer.writeln(" ├── _annotations.coco.json");
-      readmeBuffer.writeln(" │    -> The Master Dataset file.");
+      readmeBuffer.writeln(" │    -> The Master Dataset file (COCO Standard).");
       readmeBuffer.writeln(" │");
       readmeBuffer.writeln(" ├── project_data.csv");
-      readmeBuffer.writeln(" │    -> Contains raw metadata: GPS coordinates, Timestamps, and file paths.");
-      readmeBuffer.writeln(" │");
-      readmeBuffer.writeln(" ├── map_overview_X.png");
-      readmeBuffer.writeln(" │    -> Visual heatmap clusters showing where images were taken.");
+      readmeBuffer.writeln(" │    -> Raw metadata (GPS, Timestamp, Labels).");
       readmeBuffer.writeln(" │");
       readmeBuffer.writeln(" ├── images/");
-      readmeBuffer.writeln(" │    -> Contains all the source images.");
-
-      if (includeAnnotationFolder) {
-        readmeBuffer.writeln(" │");
-        readmeBuffer.writeln(" └── annotation/");
-        readmeBuffer.writeln("      -> Contains visual segmentation masks (PNG) for quick preview.");
-      }
-
+      readmeBuffer.writeln(" │    -> Source images.");
       readmeBuffer.writeln("");
-      readmeBuffer.writeln("--------------------------------------------------");
       readmeBuffer.writeln("Generated by GeoVisionTagger");
-      readmeBuffer.writeln("https://github.com/Blltz-0/GeoVision");
 
       await readmeFile.writeAsString(readmeBuffer.toString());
       tempFiles.add(readmeFile);
 
-      // --- 7. ZIP ---
+      // --- 7. ZIP (WITH STRICT FILTERING) ---
       debugPrint("📦 Zipping Project...");
       final File zipFile = File(zipPath);
       if (await zipFile.exists()) await zipFile.delete();
@@ -356,7 +314,7 @@ class ExportService {
   }
 }
 
-// --- ISOLATE FUNCTIONS (Unchanged) ---
+// --- ISOLATE FUNCTIONS (With updated exclusions) ---
 Uint8List _encodePngInBackground(img.Image image) {
   return img.encodePng(image);
 }
@@ -370,7 +328,23 @@ void _zipInBackground(List<String> paths) {
     if (!sourceDir.existsSync()) return;
 
     final entities = sourceDir.listSync(recursive: true);
-    int count = 0;
+
+    // --- FILES TO EXCLUDE ---
+    final List<String> excludedFiles = [
+      // App config files
+      'last_opened.txt',
+      'project_type.txt',
+      'author.txt',
+      'description.txt',
+      'upload_history.json',
+      'classes.json',
+      'labels.json',
+      // Redundant or temp files explicitly mentioned by user
+      'data.csv',                // Redundant, we use project_data.csv
+      'project_map_overview.png', // The black/failed map
+      'map_overview.png',         // Generic map (we use map_overview_1.png)
+      'map_overview_region.png',  // Redundant region map
+    ];
 
     for (var entity in entities) {
       if (entity is File) {
@@ -378,16 +352,13 @@ void _zipInBackground(List<String> paths) {
         if (fileName.startsWith('.')) continue;
 
         String lowerName = fileName.toLowerCase();
-        if (lowerName == 'last_opened.txt' ||
-            lowerName == 'project_type.txt' ||
-            lowerName == 'author.txt' ||
-            lowerName == 'description.txt' ||
-            lowerName == 'upload_history.json' ||
-            lowerName == 'classes.json' ||
-            lowerName == 'labels.json') {
+
+        // 1. Check strict exclusion list
+        if (excludedFiles.contains(lowerName)) {
           continue;
         }
 
+        // 2. Exclude internal annotation JSONs (We only want the master COCO file)
         if (entity.path.contains('${Platform.pathSeparator}annotation${Platform.pathSeparator}')) {
           if (lowerName.endsWith('.json')) {
             continue;
@@ -402,7 +373,6 @@ void _zipInBackground(List<String> paths) {
         List<int> fileBytes = entity.readAsBytesSync();
         final archiveFile = ArchiveFile(relativePath, fileBytes.length, fileBytes);
         archive.addFile(archiveFile);
-        count++;
       }
     }
 

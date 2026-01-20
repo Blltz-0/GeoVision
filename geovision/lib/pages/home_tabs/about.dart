@@ -53,7 +53,7 @@ class AboutPage extends StatelessWidget {
             const SizedBox(height: 10),
             _buildInfoRow(Icons.email, 'Contact', ['reolegio.l@gmail.com']),
             const SizedBox(height: 10),
-            _buildInfoRow(Icons.copyright, 'License', ['CC BY-ND 4.0']),
+            _buildInfoRow(Icons.copyright, 'License', ['MIT License']),
             const SizedBox(height: 10),
             _buildInfoRow(Icons.copyright, 'Software', ['https://github.com/Blltz-0/GeoVision']),
 
