@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:geovision/pages/manage_classes_page.dart';
@@ -109,7 +110,6 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
       final projectPath = '${docDir.path}/projects/${widget.projectName}';
       final imagesDir = Directory('$projectPath/images');
 
-      // 1. Load Images from Disk (For Gallery Display)
       if (!await imagesDir.exists()) {
         await imagesDir.create(recursive: true);
       }
@@ -123,31 +123,26 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
       })
           .toList();
 
-      // Sort by date (newest first)
       filesOnDisk.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
 
-      // 2. Load CSV Data (For Labels/Coordinates)
-      List<Map<String, dynamic>> rawCsvData = await MetadataService.readCsvData(widget.projectName);
+      // 2. Load GeoJSON Data (Service now handles .geojson internally)
+      List<Map<String, dynamic>> rawGeoData = await MetadataService.readCsvData(widget.projectName);
 
-      // 3. Map CSV data to filename for quick lookup
-      Map<String, Map<String, dynamic>> csvMap = {};
-      for (var row in rawCsvData) {
+      Map<String, Map<String, dynamic>> geoMap = {};
+      for (var row in rawGeoData) {
         String rawPath = row['path'] ?? '';
         String filename = rawPath.split(Platform.pathSeparator).last;
         if (filename.isNotEmpty) {
-          csvMap[filename] = row;
+          geoMap[filename] = row;
         }
       }
 
-      // 4. Build the Label Map for the UI
       Map<String, String> newLabelMap = {};
       for (File file in filesOnDisk) {
         String filename = file.path.split(Platform.pathSeparator).last;
-        if (csvMap.containsKey(filename)) {
-          newLabelMap[filename] = csvMap[filename]!['class'] ?? 'Unclassified';
+        if (geoMap.containsKey(filename)) {
+          newLabelMap[filename] = geoMap[filename]!['class'] ?? 'Unclassified';
         } else {
-          // If file exists on disk but not in CSV, show as Unclassified visually
-          // But DO NOT write to CSV yet.
           newLabelMap[filename] = 'Unclassified';
         }
       }
@@ -155,7 +150,7 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
       if (mounted) {
         setState(() {
           _projectImages = filesOnDisk;
-          _csvData = rawCsvData;
+          _csvData = rawGeoData;
           _labelMap = newLabelMap;
           _isLoadingImages = false;
         });
@@ -189,14 +184,15 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
 
       filesOnDisk.sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
 
-      List<Map<String, dynamic>> rawCsvData = await MetadataService.readCsvData(widget.projectName);
+      // Read current GeoJSON
+      List<Map<String, dynamic>> rawGeoData = await MetadataService.readCsvData(widget.projectName);
 
-      Map<String, Map<String, dynamic>> csvMap = {};
-      for (var row in rawCsvData) {
+      Map<String, Map<String, dynamic>> geoMap = {};
+      for (var row in rawGeoData) {
         String rawPath = row['path'] ?? '';
         String filename = rawPath.split(Platform.pathSeparator).last;
         if (filename.isNotEmpty) {
-          csvMap[filename] = row;
+          geoMap[filename] = row;
         }
       }
 
@@ -207,8 +203,8 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
         String filename = file.path.split(Platform.pathSeparator).last;
         String currentAbsolutePath = file.path;
 
-        if (csvMap.containsKey(filename)) {
-          var existingRow = csvMap[filename]!;
+        if (geoMap.containsKey(filename)) {
+          var existingRow = geoMap[filename]!;
           existingRow['path'] = currentAbsolutePath;
           cleanDataList.add(existingRow);
           String cls = existingRow['class'] ?? '';
@@ -242,7 +238,8 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
         }
       }
 
-      await _saveCsvToDisk(cleanDataList);
+      // Updated call to GeoJSON saver
+      await _saveGeoJsonToDisk(cleanDataList);
 
       if (mounted) {
         setState(() {
@@ -259,28 +256,38 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
     }
   }
 
-  Future<void> _saveCsvToDisk(List<Map<String, dynamic>> data) async {
+  Future<void> _saveGeoJsonToDisk(List<Map<String, dynamic>> data) async {
     try {
       final docDir = await getApplicationDocumentsDirectory();
-      final File csvFile = File('${docDir.path}/projects/${widget.projectName}/project_data.csv');
-      final IOSink sink = csvFile.openWrite();
+      final File geoFile = File('${docDir.path}/projects/${widget.projectName}/project_data.geojson');
 
-      sink.writeln("path,class,lat,lng,time");
+      // Construct FeatureCollection
+      final List<Map<String, dynamic>> features = data.map((row) {
+        return {
+          "type": "Feature",
+          "geometry": {
+            "type": "Point",
+            "coordinates": [
+              (row['lng'] as num).toDouble(),
+              (row['lat'] as num).toDouble()
+            ]
+          },
+          "properties": {
+            "path": row['path'],
+            "class": row['class'],
+            "time": row['time'],
+          }
+        };
+      }).toList();
 
-      for (var row in data) {
-        String fullPath = row['path'].toString();
-        String filename = fullPath.split(Platform.pathSeparator).last;
-        String cls = row['class'] ?? 'Unclassified';
-        String lat = row['lat']?.toString() ?? '0.0';
-        String lng = row['lng']?.toString() ?? '0.0';
-        String time = row['time']?.toString() ?? DateTime.now().toIso8601String();
+      final geoJson = {
+        "type": "FeatureCollection",
+        "features": features,
+      };
 
-        sink.writeln("$filename,$cls,$lat,$lng,$time");
-      }
-      await sink.flush();
-      await sink.close();
+      await geoFile.writeAsString(jsonEncode(geoJson));
     } catch (e) {
-      debugPrint("❌ Failed to save CSV: $e");
+      debugPrint("❌ Failed to save GeoJSON: $e");
     }
   }
 
@@ -410,7 +417,8 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
       }
 
       await oldDir.rename(newDir.path);
-      await MetadataService.rebuildProjectData(newName);
+      // Rebuild specifically handles GeoJSON now
+      await MetadataService.rebuildProjectData(newName, projectType: _projectType);
       return true;
     } catch (e) {
       debugPrint("❌ CRITICAL ERROR: $e");
@@ -502,7 +510,24 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: Colors.lightGreenAccent,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        flexibleSpace: Container(
+          decoration: BoxDecoration(
+              gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    ?Colors.lightGreen[300],
+                    ?Colors.lightGreen[400],
+                    ?Colors.lightGreen[400],
+                    ?Colors.lightGreen[500],
+                    ?Colors.lightGreen[500],
+                    ?Colors.lightGreen[600],
+                    ?Colors.lightGreen[700],
+                  ])
+          ),
+        ),
         automaticallyImplyLeading: false,
         centerTitle: true,
         leading: IconButton(
@@ -578,18 +603,52 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
               : const SizedBox(),
         ],
       ),
-      bottomNavigationBar: BottomNavigationBar(
-        type: BottomNavigationBarType.fixed,
-        backgroundColor: Colors.lightGreenAccent,
-        currentIndex: _currentIndex,
-        onTap: _onTabTapped,
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.camera_alt), label: 'Camera'),
-          BottomNavigationBarItem(icon: Icon(Icons.photo_library), label: 'Gallery'),
-          BottomNavigationBarItem(icon: Icon(Icons.map), label: 'Map'),
-          BottomNavigationBarItem(icon: Icon(Icons.settings), label: 'Settings'),
-        ],
-      ),
+        bottomNavigationBar: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [
+                Color(0xFFAED581), // lightGreen[300]
+                Color(0xFF9CCC65), // lightGreen[400]
+                Color(0xFF9CCC65),
+                Color(0xFF8BC34A), // lightGreen[500]
+                Color(0xFF8BC34A),
+                Color(0xFF7CB342), // lightGreen[600]
+                Color(0xFF689F38), // lightGreen[700]
+              ],
+            ),
+          ),
+          child: SafeArea(
+            child: BottomNavigationBar(
+              type: BottomNavigationBarType.fixed,
+              backgroundColor: Colors.transparent,
+              elevation: 0,
+              selectedItemColor: Colors.lightGreenAccent,
+              unselectedItemColor: Colors.white,
+              currentIndex: _currentIndex,
+              onTap: _onTabTapped,
+              items: const [
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.camera_alt),
+                  label: 'Camera',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.photo_library),
+                  label: 'Gallery',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.map),
+                  label: 'Map',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.settings),
+                  label: 'Settings',
+                ),
+              ],
+            ),
+          ),
+    )
     );
   }
 }

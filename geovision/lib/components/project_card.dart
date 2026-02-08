@@ -54,7 +54,16 @@ class ProjectCard extends StatelessWidget {
         margin: const EdgeInsets.symmetric(vertical: 5, horizontal: 5),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.lightGreenAccent,
+            gradient: LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [
+                  ?Colors.lightGreen[300],
+                  ?Colors.lightGreen[400],
+                  ?Colors.lightGreen[400],
+                  ?Colors.lightGreen[500],
+                  ?Colors.lightGreen[500],
+                ]),
           borderRadius: BorderRadius.circular(12),
           boxShadow: [
             BoxShadow(
@@ -76,46 +85,42 @@ class ProjectCard extends StatelessWidget {
             }
 
             return Column(
-              mainAxisAlignment: MainAxisAlignment.center,
+              mainAxisAlignment: MainAxisAlignment.start,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisSize: MainAxisSize.min, // The Row only takes as much space as needed
                   children: [
-                    Icon(
-                        iconData ?? Icons.folder,
-                        color: Colors.green[800],
-                        size: 20
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          _buildStatBadge(Icons.image, imageCount.toString(), Colors.blue[800]!),
-                          const SizedBox(height: 4),
-                          // Use logic to determine icon
-                          _buildStatBadge(
-                              projectType == 'segmentation' ? Icons.category : Icons.label,
-                              classCount.toString(),
-                              Colors.orange[900]!
-                          ),
-                        ],
+                    Icon(iconData ?? Icons.folder, color: Colors.green[800], size: 20),
+                    const SizedBox(width: 5),
+                    Flexible( // Flexible allows the text to be small, but prevents it from breaking the Row
+                      child: Text(
+                        title,
+                        style: const TextStyle(
+                          color: Colors.black87,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 10,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  title,
-                  style: const TextStyle(
-                    color: Colors.black87,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
+                SizedBox(height: 5),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    _buildStatBadge(Icons.image, imageCount.toString(), Colors.blue[800]!),
+                    const SizedBox(height: 4,width: 4,),
+                    // Use logic to determine icon
+                    _buildStatBadge(
+                        projectType == 'segmentation' ? Icons.category : Icons.label,
+                        classCount.toString(),
+                        Colors.orange[900]!
+                    ),
+                  ],
                 ),
               ],
             );
@@ -129,17 +134,15 @@ class ProjectCard extends StatelessWidget {
     return Row(
       children: [
         Icon(icon, size: 14, color: color),
-        const SizedBox(width: 4),
-        Flexible(
-          child: Text(
-            text,
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey[800],
-              fontWeight: FontWeight.w600,
-            ),
-            overflow: TextOverflow.ellipsis,
+        const SizedBox(width: 4, height: 4),
+        Text(
+          text,
+          style: TextStyle(
+            fontSize: 12,
+            color: Colors.grey[800],
+            fontWeight: FontWeight.w600,
           ),
+          overflow: TextOverflow.ellipsis,
         ),
       ],
     );

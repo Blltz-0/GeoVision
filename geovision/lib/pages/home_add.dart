@@ -95,7 +95,24 @@ class _HomeAddPageState extends State<HomeAddPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Create New Project"),
-        backgroundColor: Colors.lightGreenAccent,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        flexibleSpace: Container(
+          decoration: BoxDecoration(
+              gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    ?Colors.lightGreen[300],
+                    ?Colors.lightGreen[400],
+                    ?Colors.lightGreen[400],
+                    ?Colors.lightGreen[500],
+                    ?Colors.lightGreen[500],
+                    ?Colors.lightGreen[600],
+                    ?Colors.lightGreen[700],
+                  ])
+          ),
+        ),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(20),
@@ -178,21 +195,60 @@ class _HomeAddPageState extends State<HomeAddPage> {
 
               const SizedBox(height: 40),
 
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.lightGreen,
-                    foregroundColor: Colors.white,
-                  ),
-                  onPressed: _isCreating ? null : _submit,
-                  child: _isCreating
-                      ? const CircularProgressIndicator(color: Colors.white)
-                      : const Text("Create Project", style: TextStyle(fontSize: 16)),
+          SizedBox(
+            width: double.infinity,
+            height: 50,
+            child: ElevatedButton(
+              onPressed: _isCreating ? null : _submit,
+              style: ElevatedButton.styleFrom(
+                padding: EdgeInsets.zero,
+                backgroundColor: Colors.transparent,
+                shadowColor: Colors.transparent,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
                 ),
               ),
-            ],
+              child: Ink(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.centerLeft,
+                    end: Alignment.centerRight,
+                    colors: [
+                      ?Colors.lightGreen[300],
+                      ?Colors.lightGreen[400],
+                      ?Colors.lightGreen[400],
+                      ?Colors.lightGreen[500],
+                      ?Colors.lightGreen[500],
+                      ?Colors.lightGreen[600],
+                      ?Colors.lightGreen[700],
+                    ]),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Container(
+                  alignment: Alignment.center,
+                  child: _isCreating
+                      ? const SizedBox(
+                    height: 24,
+                    width: 24,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                      : const Text(
+                    "Create Project",
+                    style: TextStyle(
+                      fontSize: 16,
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+
+          ],
           ),
         ),
       ),

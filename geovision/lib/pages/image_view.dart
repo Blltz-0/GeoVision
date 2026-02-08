@@ -656,6 +656,24 @@ class _ImageViewState extends State<ImageView> {
   }
 
   Widget? _buildFab() {
+    // Common Gradient Decoration for both FAB types
+    final BoxDecoration fabDecoration = BoxDecoration(
+      borderRadius: BorderRadius.circular(20),
+      gradient: const LinearGradient(
+        begin: Alignment.centerLeft,
+        end: Alignment.centerRight,
+        colors: [
+          Color(0xFFAED581),
+          Color(0xFF9CCC65),
+          Color(0xFF9CCC65),
+          Color(0xFF8BC34A),
+          Color(0xFF8BC34A),
+          Color(0xFF7CB342),
+          Color(0xFF689F38),
+        ],
+      ),
+    );
+
     if (widget.projectType == 'segmentation') {
       return FloatingActionButton.extended(
         heroTag: "annotate_fab",
@@ -681,18 +699,62 @@ class _ImageViewState extends State<ImageView> {
             }
           }
         },
-        icon: const Icon(Icons.brush),
-        label: const Text("Annotate"),
-        backgroundColor: Colors.lightGreenAccent,
+        // Apply the gradient styling logic here
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        highlightElevation: 0,
+        extendedPadding: EdgeInsets.zero,
+        focusElevation: 0,
+        hoverElevation: 0,
+        splashColor: Colors.transparent,
+        label: Ink(
+          decoration: fabDecoration,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
+            constraints: const BoxConstraints(minHeight: 48),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: const [
+                Icon(Icons.brush, color: Colors.white),
+                SizedBox(width: 8),
+                Text(
+                  "Annotate",
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
+        ),
       );
     } else if (widget.projectType == 'classification') {
       return FloatingActionButton.extended(
-        heroTag: "tag_fab",
+        heroTag: 'fab_images',
         onPressed: _showTaggingSheet,
-        icon: const Icon(Icons.label),
-        label: const Text("Tag Image"),
-        backgroundColor: Colors.blueAccent,
-        foregroundColor: Colors.white,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        highlightElevation: 0,
+        extendedPadding: EdgeInsets.zero,
+        focusElevation: 0,
+        hoverElevation: 0,
+        splashColor: Colors.transparent,
+        label: Ink(
+          decoration: fabDecoration,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
+            constraints: const BoxConstraints(minHeight: 48),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: const [
+                Icon(Icons.label, color: Colors.white),
+                SizedBox(width: 8),
+                Text(
+                  "Tag Image",
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
+        ),
       );
     }
     return null;

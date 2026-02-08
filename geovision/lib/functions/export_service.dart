@@ -26,9 +26,10 @@ class ExportService {
       final annotationDir = Directory('${sourceDir.path}/annotation');
       final zipPath = '${tempDir.path}/${projectName}_COCO_Export.zip';
 
-      // --- 1. FETCH METADATA & CONFIG ---
-      debugPrint("🔍 Reading Project Data...");
-      final csvData = await MetadataService.readCsvData(projectName);
+      // --- 1. FETCH METADATA & CONFIG (GeoJSON Based) ---
+      debugPrint("🔍 Reading Project Data from GeoJSON...");
+      // This now calls the GeoJSON-compatible version of readCsvData
+      final geoData = await MetadataService.readCsvData(projectName);
       final projectClasses = await MetadataService.getClasses(projectName);
 
       // Read Project Type
@@ -58,7 +59,6 @@ class ExportService {
       List<Map<String, dynamic>> categories = [];
       int nextCatId = 1;
 
-      // Add explicit classes
       for (var c in projectClasses) {
         String name = c['name'];
         if (name.toLowerCase() == 'unclassified') continue;
@@ -75,8 +75,8 @@ class ExportService {
       List<Map<String, dynamic>> annotations = [];
       int annotationIdCounter = 1;
 
-      for (int i = 0; i < csvData.length; i++) {
-        var row = csvData[i];
+      for (int i = 0; i < geoData.length; i++) {
+        var row = geoData[i];
         String originalPath = row['path'].toString();
         String filename = originalPath.split(Platform.pathSeparator).last;
         int imageId = i + 1;
@@ -100,9 +100,8 @@ class ExportService {
           } catch (_) {}
         }
 
-        // Skip zero-size images
         if (imgWidth <= 0 || imgHeight <= 0) {
-          debugPrint("⚠️ Skipping zero-size or invalid image: $filename");
+          debugPrint("⚠️ Skipping invalid image: $filename");
           continue;
         }
 
@@ -114,9 +113,7 @@ class ExportService {
           "date_captured": row['time'] ?? ""
         });
 
-        // ============================================================
-        // BRANCH: CLASSIFICATION MODE
-        // ============================================================
+        // BRANCH: CLASSIFICATION
         if (projectType == 'classification') {
           String? label = row['class']?.toString();
 
@@ -129,7 +126,6 @@ class ExportService {
 
             int catId = classToId[label]!;
 
-            // Full Image BBox for Classification
             annotations.add({
               "id": annotationIdCounter++,
               "image_id": imageId,
@@ -141,9 +137,7 @@ class ExportService {
             });
           }
         }
-        // ============================================================
-        // BRANCH: SEGMENTATION MODE
-        // ============================================================
+        // BRANCH: SEGMENTATION
         else {
           String baseName = filename.split('.').first;
           File layerFile = File('${annotationDir.path}/${baseName}_data.json');
@@ -185,26 +179,17 @@ class ExportService {
         }
       }
 
-      // --- 4. WRITE FINAL JSON ---
+      // --- 4. WRITE FINAL COCO JSON ---
       final fullCocoJson = {
         "info": {
-          "description": description.isNotEmpty
-              ? description
-              : "$projectName dataset generated using the GeoVisionTagger mobile application.",
+          "description": description.isNotEmpty ? description : "$projectName GeoVision Export.",
           "year": DateTime.now().year,
           "version": "1.0.0",
           "contributor": author,
           "date_created": DateTime.now().toIso8601String(),
           "url": "https://github.com/Blltz-0/GeoVision",
-          "source": "https://github.com/Blltz-0/GeoVision"
         },
-        "licenses": [
-          {
-            "id": 1,
-            "name": "CC BY 4.0",
-            "url": "https://creativecommons.org/licenses/by/4.0/"
-          }
-        ],
+        "licenses": [{"id": 1, "name": "CC BY 4.0", "url": "https://creativecommons.org/licenses/by/4.0/"}],
         "images": images,
         "annotations": annotations,
         "categories": categories
@@ -215,13 +200,10 @@ class ExportService {
       tempFiles.add(cocoFile);
 
       // --- 5. GENERATE MAPS ---
-      // We explicitly create files named 'map_overview_X.png'
-      List<Map<String, double>> points = [];
-      for (var row in csvData) {
-        double lat = double.tryParse(row['lat'].toString()) ?? 0.0;
-        double lng = double.tryParse(row['lng'].toString()) ?? 0.0;
-        if (lat.abs() > 0.1) points.add({'lat': lat, 'lng': lng});
-      }
+      List<Map<String, double>> points = geoData.map((e) => {
+        'lat': (e['lat'] as num).toDouble(),
+        'lng': (e['lng'] as num).toDouble()
+      }).toList();
 
       if (points.isNotEmpty) {
         var clusters = LocationClusterer.clusterPoints(points, 500.0);
@@ -238,68 +220,33 @@ class ExportService {
       }
 
       // --- 6. CREATE README.txt ---
-      debugPrint("📄 Generating README...");
       final readmeFile = File('${sourceDir.path}/README.txt');
-      List<String> categoryNames = categories.map((e) => e['name'].toString()).toList();
       final now = DateTime.now();
-      final dateStr = "${now.year}-${now.month.toString().padLeft(2,'0')}-${now.day.toString().padLeft(2,'0')} ${now.hour.toString().padLeft(2,'0')}:${now.minute.toString().padLeft(2,'0')}";
+      final dateStr = "${now.year}-${now.month.toString().padLeft(2,'0')}-${now.day.toString().padLeft(2,'0')}";
 
       final StringBuffer readmeBuffer = StringBuffer();
       readmeBuffer.writeln("PROJECT NAME: $projectName");
       readmeBuffer.writeln("GENERATED ON: $dateStr");
       readmeBuffer.writeln("AUTHOR:       $author");
-      readmeBuffer.writeln("SOURCE TOOL:  https://github.com/Blltz-0/GeoVision");
-      readmeBuffer.writeln("DATA LICENSE: CC BY 4.0 (Free to use and modify with attribution)");
       readmeBuffer.writeln("==================================================");
       readmeBuffer.writeln("");
-
-      if (description.isNotEmpty) {
-        readmeBuffer.writeln("DESCRIPTION");
-        readmeBuffer.writeln("-----------");
-        readmeBuffer.writeln(description);
-        readmeBuffer.writeln("");
-      }
-
-      readmeBuffer.writeln("DATASET INFORMATION");
-      readmeBuffer.writeln("-------------------");
-      if (projectType == 'segmentation') {
-        readmeBuffer.writeln("Type: Image Segmentation");
-        readmeBuffer.writeln("Format: COCO (Polygon Masks)");
-      } else {
-        readmeBuffer.writeln("Type: Image Classification");
-        readmeBuffer.writeln("Format: COCO (Full-Image Bounding Boxes)");
-      }
-      readmeBuffer.writeln("Total Images Exported: ${images.length}");
-      readmeBuffer.writeln("");
-
       readmeBuffer.writeln("DIRECTORY STRUCTURE");
-      readmeBuffer.writeln("-------------------");
-      readmeBuffer.writeln("/");
-      readmeBuffer.writeln(" ├── _annotations.coco.json");
-      readmeBuffer.writeln(" │    -> The Master Dataset file (COCO Standard).");
-      readmeBuffer.writeln(" │");
-      readmeBuffer.writeln(" ├── project_data.csv");
-      readmeBuffer.writeln(" │    -> Raw metadata (GPS, Timestamp, Labels).");
-      readmeBuffer.writeln(" │");
-      readmeBuffer.writeln(" ├── images/");
-      readmeBuffer.writeln(" │    -> Source images.");
-      readmeBuffer.writeln("");
-      readmeBuffer.writeln("Generated by GeoVisionTagger");
+      readmeBuffer.writeln(" ├── _annotations.coco.json (Master COCO Labels)");
+      readmeBuffer.writeln(" ├── project_data.geojson   (Standard GIS Metadata)");
+      readmeBuffer.writeln(" ├── images/                (Source Images)");
+      readmeBuffer.writeln(" ├── map_overview_X.png      (Location Previews)");
 
       await readmeFile.writeAsString(readmeBuffer.toString());
       tempFiles.add(readmeFile);
 
-      // --- 7. ZIP (WITH STRICT FILTERING) ---
-      debugPrint("📦 Zipping Project...");
+      // --- 7. ZIP AND SHARE ---
       final File zipFile = File(zipPath);
       if (await zipFile.exists()) await zipFile.delete();
 
       await compute(_zipInBackground, [sourceDir.path, zipPath]);
 
       if (await zipFile.exists() && await zipFile.length() > 0) {
-        await Share.shareXFiles([XFile(zipPath)], text: 'COCO Export: $projectName');
-      } else {
-        throw Exception("Zip file failed.");
+        await Share.shareXFiles([XFile(zipPath)], text: 'GeoVision Export: $projectName');
       }
 
     } catch (e, stack) {
@@ -314,7 +261,7 @@ class ExportService {
   }
 }
 
-// --- ISOLATE FUNCTIONS (With updated exclusions) ---
+// --- ISOLATE FUNCTIONS ---
 Uint8List _encodePngInBackground(img.Image image) {
   return img.encodePng(image);
 }
@@ -329,9 +276,7 @@ void _zipInBackground(List<String> paths) {
 
     final entities = sourceDir.listSync(recursive: true);
 
-    // --- FILES TO EXCLUDE ---
     final List<String> excludedFiles = [
-      // App config files
       'last_opened.txt',
       'project_type.txt',
       'author.txt',
@@ -339,11 +284,10 @@ void _zipInBackground(List<String> paths) {
       'upload_history.json',
       'classes.json',
       'labels.json',
-      // Redundant or temp files explicitly mentioned by user
-      'data.csv',                // Redundant, we use project_data.csv
-      'project_map_overview.png', // The black/failed map
-      'map_overview.png',         // Generic map (we use map_overview_1.png)
-      'map_overview_region.png',  // Redundant region map
+      'project_data.csv', // Exclude legacy CSV
+      'project_map_overview.png',
+      'map_overview.png',
+      'map_overview_region.png',
     ];
 
     for (var entity in entities) {
@@ -353,16 +297,11 @@ void _zipInBackground(List<String> paths) {
 
         String lowerName = fileName.toLowerCase();
 
-        // 1. Check strict exclusion list
-        if (excludedFiles.contains(lowerName)) {
-          continue;
-        }
+        if (excludedFiles.contains(lowerName)) continue;
 
-        // 2. Exclude internal annotation JSONs (We only want the master COCO file)
+        // Exclude the raw annotation folder contents
         if (entity.path.contains('${Platform.pathSeparator}annotation${Platform.pathSeparator}')) {
-          if (lowerName.endsWith('.json')) {
-            continue;
-          }
+          continue;
         }
 
         String relativePath = entity.path.replaceFirst(sourcePath, '');

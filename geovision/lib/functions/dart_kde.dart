@@ -20,7 +20,7 @@ class DartKDE {
     final heatmapImage = img.Image(width: width, height: height, numChannels: 4);
     img.fill(heatmapImage, color: img.ColorRgba8(0, 0, 0, 0));
 
-    // ✅ FIX 1: DYNAMIC BANDWIDTH
+    // DYNAMIC BANDWIDTH
     // Instead of fixed 0.0005, we calculate it based on the map's latitude span.
     // "Span / 40" means a single point's glow will cover roughly 1/40th of the map height.
     double latSpan = maxLat - minLat;

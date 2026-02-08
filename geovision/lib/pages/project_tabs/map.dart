@@ -4,7 +4,7 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_map_heatmap/flutter_map_heatmap.dart';
-import 'package:geocoding/geocoding.dart'; // Required for address resolution
+import 'package:geocoding/geocoding.dart';
 
 import '../../components/class_selector_dropdown.dart';
 
@@ -48,7 +48,6 @@ class _LocationDisplayState extends State<LocationDisplay> {
       return;
     }
 
-    // Default to Lat/Lng while loading or on error
     String latLngString = "${widget.latitude.toStringAsFixed(5)}, ${widget.longitude.toStringAsFixed(5)}";
     if (mounted) setState(() => _displayText = latLngString);
 
@@ -64,9 +63,13 @@ class _LocationDisplayState extends State<LocationDisplay> {
         String finalName = "";
         if (part1.isNotEmpty && part2.isNotEmpty) {
           finalName = "$part1, $part2";
-        } else if (part1.isNotEmpty) {finalName = "$part1, $part3";}
-        else if (part2.isNotEmpty) {finalName = "$part2, $part3";}
-        else {finalName = part3;}
+        } else if (part1.isNotEmpty) {
+          finalName = "$part1, $part3";
+        } else if (part2.isNotEmpty) {
+          finalName = "$part2, $part3";
+        } else {
+          finalName = part3;
+        }
 
         if (finalName.trim().isEmpty || finalName.trim() == ",") finalName = "Unknown Location";
 
@@ -142,9 +145,11 @@ class _MapPageState extends State<MapPage> {
     List<WeightedLatLng> heatmapPoints = [];
 
     for (var point in widget.mapData) {
-      double lat = point['lat'] ?? 0.0;
-      double lng = point['lng'] ?? 0.0;
-      // String imagePath = point['path'] ?? ""; // Not needed here anymore, passed in object
+      // --- GEOJSON COMPATIBILITY FIX ---
+      double lat = (point['lat'] as num?)?.toDouble() ?? 0.0;
+      double lng = (point['lng'] as num?)?.toDouble() ?? 0.0;
+      // ---------------------------------
+
       String pointClass = point['class'] ?? "Unclassified";
       String timeStr = point['time'] ?? "";
 
@@ -177,7 +182,6 @@ class _MapPageState extends State<MapPage> {
           width: 40,
           height: 40,
           child: GestureDetector(
-            // UPDATED: Pass the entire point object to the dialog
             onTap: () => _showImageDialog(point),
             child: const Icon(Icons.location_on, color: Colors.red, size: 40),
           ),
@@ -185,7 +189,7 @@ class _MapPageState extends State<MapPage> {
       );
 
       // 4. CREATE HEATMAP POINT
-      heatmapPoints.add(WeightedLatLng(LatLng(lat, lng), 1));
+      heatmapPoints.add(WeightedLatLng(LatLng(lat, lng), 1.0));
     }
 
     setState(() {
@@ -222,8 +226,12 @@ class _MapPageState extends State<MapPage> {
   void _showImageDialog(Map<String, dynamic> pointData) {
     String path = pointData['path'] ?? "";
     String className = pointData['class'] ?? "Unclassified";
-    double lat = pointData['lat'] ?? 0.0;
-    double lng = pointData['lng'] ?? 0.0;
+
+    // --- GEOJSON COMPATIBILITY FIX ---
+    double lat = (pointData['lat'] as num?)?.toDouble() ?? 0.0;
+    double lng = (pointData['lng'] as num?)?.toDouble() ?? 0.0;
+    // ---------------------------------
+
     String filename = path.split(Platform.pathSeparator).last;
 
     // Parse Date
@@ -268,9 +276,9 @@ class _MapPageState extends State<MapPage> {
                   if (widget.projectType == "classification")
                     Row(
                       children: [
-                      const Icon(Icons.label, size: 16, color: Colors.blue),
-                      const SizedBox(width: 8),
-                      Text("Class: $className", style: const TextStyle(fontSize: 14)),
+                        const Icon(Icons.label, size: 16, color: Colors.blue),
+                        const SizedBox(width: 8),
+                        Text("Class: $className", style: const TextStyle(fontSize: 14)),
                       ],
                     ),
                   const SizedBox(height: 5),
@@ -317,12 +325,54 @@ class _MapPageState extends State<MapPage> {
   }
 
   Future<void> _pickDateRange() async {
+    // 1. Create a set of "Midnight" dates that actually have images
+    final Set<DateTime> datesWithData = widget.mapData
+        .where((point) {
+      // Filter by class first if needed
+      if (_filterClass != "All" && (point['class'] ?? "Unclassified") != _filterClass) return false;
+      return point['time'] != null && point['time'].toString().isNotEmpty;
+    })
+        .map((point) {
+      try {
+        // Parse the ISO string
+        DateTime dt = DateTime.parse(point['time']);
+        // IMPORTANT: Normalize to midnight so the picker can match it
+        return DateTime(dt.year, dt.month, dt.day);
+      } catch (e) {
+        return null;
+      }
+    })
+        .whereType<DateTime>() // Remove nulls from failed parses
+        .toSet();
+
+    // 2. Open the picker
     DateTimeRange? newRange = await showDateRangePicker(
       context: context,
       firstDate: DateTime(2020),
       lastDate: DateTime.now(),
       initialDateRange: _selectedDateRange,
+      // Ensure the signature matches your Flutter version (3 arguments)
+      selectableDayPredicate: (DateTime date, DateTime? start, DateTime? end) {
+        // If the set is empty (no images found), allow all dates so the user isn't stuck
+        if (datesWithData.isEmpty) return true;
+
+        // Only allow selection of dates that actually have data
+        return datesWithData.contains(DateTime(date.year, date.month, date.day));
+      },
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: Colors.blue,
+              onPrimary: Colors.white,
+              onSurface: Colors.black,
+            ),
+          ),
+          child: child!,
+        );
+      },
     );
+
     if (newRange != null) {
       setState(() => _selectedDateRange = newRange);
       _filterMarkers();

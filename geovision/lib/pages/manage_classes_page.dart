@@ -88,7 +88,24 @@ class _ManageClassesPageState extends State<ManageClassesPage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Manage Classes"),
-        backgroundColor: Colors.lightGreenAccent, // Matches your app theme
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        flexibleSpace: Container(
+          decoration: BoxDecoration(
+              gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    ?Colors.lightGreen[300],
+                    ?Colors.lightGreen[400],
+                    ?Colors.lightGreen[400],
+                    ?Colors.lightGreen[500],
+                    ?Colors.lightGreen[500],
+                    ?Colors.lightGreen[600],
+                    ?Colors.lightGreen[700],
+                  ])
+          ),
+        ),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -130,20 +147,49 @@ class _ManageClassesPageState extends State<ManageClassesPage> {
           );
         },
       ),
-      // Optional: Add floating button to create new class from here as well
       floatingActionButton: FloatingActionButton(
-        backgroundColor: Colors.lightGreenAccent,
-        child: const Icon(Icons.add),
+        elevation: 6,
+        backgroundColor: Colors.transparent,
+        splashColor: Colors.white24,
         onPressed: () async {
           final result = await Navigator.push(
             context,
             MaterialPageRoute(
-              builder: (context) => CreateClassPage(projectName: widget.projectName),
+              builder: (context) =>
+                  CreateClassPage(projectName: widget.projectName),
             ),
           );
           if (result != null && mounted) _loadClasses();
         },
+        child: Ink(
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            gradient: LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [
+                Color(0xFFAED581),
+                Color(0xFF9CCC65),
+                Color(0xFF9CCC65),
+                Color(0xFF8BC34A),
+                Color(0xFF8BC34A),
+                Color(0xFF7CB342),
+                Color(0xFF689F38),
+              ],
+            ),
+          ),
+          child: const SizedBox(
+            width: 56,
+            height: 56,
+            child: Icon(
+              Icons.add,
+              color: Colors.white,
+              size: 28,
+            ),
+          ),
+        ),
       ),
+
     );
   }
 }

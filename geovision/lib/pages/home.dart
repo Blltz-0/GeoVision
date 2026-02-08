@@ -7,6 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 // COMPONENT IMPORTS
 import '../components/project_card.dart';
 import '../components/project_list.dart';
+import '../functions/import_service.dart';
 import 'home_add.dart';
 import 'home_tabs/about.dart';
 import 'home_tabs/help.dart';
@@ -152,6 +153,82 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  void _showAddOptions() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Text("Add New Project", textAlign: TextAlign.center),
+        content: Column(
+          mainAxisSize: MainAxisSize.min, // Constrains the modal to the content
+          children: [
+            _buildActionCard(
+              icon: Icons.create_new_folder,
+              color: Colors.green,
+              title: "Create New Project",
+              onTap: () async {
+                Navigator.pop(context);
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const HomeAddPage()),
+                );
+                _loadFolders();
+              },
+            ),
+            const SizedBox(height: 12),
+            _buildActionCard(
+              icon: Icons.unarchive,
+              color: Colors.blue,
+              title: "Import Project (.zip)",
+              onTap: () async {
+                Navigator.pop(context);
+                bool success = await ImportService.importProject(context);
+                if (success) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Project imported successfully!")),
+                  );
+                  _loadFolders();
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionCard({
+    required IconData icon,
+    required Color color,
+    required String title,
+    required VoidCallback onTap,
+  }) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+          child: Row(
+            children: [
+              Icon(icon, color: color, size: 28),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                ),
+              ),
+              const Icon(Icons.chevron_right, color: Colors.grey),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final List<Map<String, dynamic>> alphaSortedData = List.from(_foldersData);
@@ -169,148 +246,177 @@ class _HomePageState extends State<HomePage> {
     return GestureDetector(
       onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
       child: Scaffold(
-        appBar: AppBar(
-          backgroundColor: Colors.lightGreenAccent,
-          automaticallyImplyLeading: false,
-          centerTitle: true,
-          title: Image.asset('assets/logo.png', height: 80, fit: BoxFit.contain),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.help_outline),
-              tooltip: 'Help',
-              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HelpPage())),
-            ),
-            IconButton(
-              icon: const Icon(Icons.info_outline),
-              tooltip: 'About',
-              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const AboutPage())),
-            ),
-          ],
-        ),
-        body: SingleChildScrollView(
-          child: Column(
-            children: [
-              // --- RECENT ITEMS AREA ---
-              Container(
-                  padding: const EdgeInsets.all(20),
-                  color: Colors.white,
-                  height: 180,
-                  width: double.infinity,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: <Widget>[
-                      const Text('Recent Items', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                      const SizedBox(height:10),
-                      Expanded(
-                        child: SingleChildScrollView(
-                          scrollDirection: Axis.horizontal,
-                          child: Row(
+        body: Container(
+          width: double.infinity,
+          height: double.infinity,
+          decoration: BoxDecoration(
+              gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    ?Colors.lightGreen[300],
+                    ?Colors.lightGreen[400],
+                    ?Colors.lightGreen[400],
+                    ?Colors.lightGreen[500],
+                    ?Colors.lightGreen[500],
+                    ?Colors.lightGreen[600],
+                    ?Colors.lightGreen[700],
+                  ])
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              children: [
+                // --- RECENT ITEMS AREA ---
+                Column(
+                  children: [
+                    SizedBox(height: 20,),
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      height: 320,
+                      width: double.infinity,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: <Widget>[
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisAlignment: MainAxisAlignment.end,
                             children: [
-                              GestureDetector(
-                                onTap: () async {
-                        // Navigate to the project creation
-                        await Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (context) => const HomeAddPage())
-                        );
-                        // Refresh list when returning
-                        _loadFolders();
-                        },
-                                child: Container(
-                                  height: 90, width: 90,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white,
-                                    border: Border.all(color: Colors.lightGreenAccent.withValues(alpha: 0.3), width: 1),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(Icons.add, color: Colors.green.withValues(alpha: 0.8)),
-                                      const Text("New", style: TextStyle(color: Colors.green, fontSize: 10))
-                                    ],
-                                  ),
-                                ),
+                              IconButton(
+                                icon: const Icon(Icons.help_outline, color: Colors.white),
+                                tooltip: 'Help',
+                                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HelpPage())),
                               ),
-                              const SizedBox(width: 5),
-                              ...List.generate(recentCount, (index) {
-                                final project = _foldersData[index];
-                                return Row(
-                                  children: [
-                                    ProjectCard(
-                                      title: project["title"],
-                                      projectType: project['type'],
-                                      iconData: _getIconForType(project['type']),
-                                      onReturn: () => _loadFolders(),
-                                    ),
-                                    const SizedBox(width: 5),
-                                  ],
-                                );
-                              }),
+                              IconButton(
+                                icon: const Icon(Icons.info_outline, color: Colors.white),
+                                tooltip: 'About',
+                                onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const AboutPage())),
+                              ),
                             ],
                           ),
-                        ),
-                      )
-                    ],
-                  )
-              ),
-              // --- ALL PROJECTS AREA ---
-              Container(
-                padding: const EdgeInsets.all(20),
-                color: Colors.grey[100],
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: <Widget>[
-                      TextField(
-                        autofocus: false,
-                        onChanged: (val) => setState(() => _searchQuery = val),
-                        decoration: InputDecoration(
-                          hintText: "Search projects...",
-                          prefixIcon: const Icon(Icons.search, color: Colors.grey),
-                          filled: true,
-                          fillColor: Colors.white,
-                          contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 20),
-                          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide(color: Colors.grey.shade300)),
-                          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: const BorderSide(color: Colors.lightGreen)),
-                        ),
-                      ),
-                      const SizedBox(height: 20),
+                          Image.asset('assets/logo.png', height: 80, fit: BoxFit.contain),
+                          const Text('Recent Items', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold,color: Colors.white)),
+                          const SizedBox(height:10),
+                          Expanded(
+                            flex: 1,
+                            child: Container(
+                              padding: const EdgeInsets.all(10),
+                              decoration: BoxDecoration(
+                                color: Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              height: 300,
+                              child: SingleChildScrollView(
+                                scrollDirection: Axis.horizontal,
+                                child: Row(
+                                  children: [
+                                    const SizedBox(width: 5),
 
-                      // 4. UPDATED: Header Row with Toggle
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text('All Projects', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-
-                          // Toggle Container
-                          Container(
-                            decoration: BoxDecoration(
-                              color: Colors.grey[300],
-                              borderRadius: BorderRadius.circular(24),
-                            ),
-                            padding: const EdgeInsets.all(3),
-                            child: Row(
-                              children: [
-                                _buildFilterBtn(Icons.apps, 'all', 'All Projects'),
-                                _buildFilterBtn(Icons.grid_view, 'classification', 'Classification Only'),
-                                _buildFilterBtn(Icons.brush, 'segmentation', 'Segmentation Only'),
-                              ],
+                                    GestureDetector(
+                                      onTap: _showAddOptions,
+                                      child: Container(
+                                        height: 90, width: 90,
+                                        decoration: BoxDecoration(
+                                          color: Colors.white,
+                                            border: Border.all(color: Colors.lightGreenAccent.withValues(alpha: 0.3), width: 1),
+                                            borderRadius: BorderRadius.circular(8),
+                                        ),
+                                        child: Column(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            Icon(Icons.add, color: Colors.green.withValues(alpha: 0.8)),
+                                            const Text("New", style: TextStyle(color: Colors.green, fontSize: 10))
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 5),
+                                    ...List.generate(recentCount, (index) {
+                                      final project = _foldersData[index];
+                                      return Row(
+                                        children: [
+                                          ProjectCard(
+                                            title: project["title"],
+                                            projectType: project['type'],
+                                            iconData: _getIconForType(project['type']),
+                                            onReturn: () => _loadFolders(),
+                                          ),
+                                          const SizedBox(width: 5),
+                                        ],
+                                      );
+                                    }),
+                                    const SizedBox(width: 5),
+                                  ],
+                                ),
+                              ),
                             ),
                           )
                         ],
+                      )
+                    ),
+                    // --- ALL PROJECTS AREA ---
+                    Container(
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(30),
+                        color: Colors.grey[100],
                       ),
 
-                      const SizedBox(height:10),
-                      SingleChildScrollView(
-                          child: ProjectList(
-                              dataList: filteredData,
-                              onRefresh: () =>  _loadFolders()
-                          )
-                      )
-                    ]
+                      child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: <Widget>[
+                            TextField(
+                              autofocus: false,
+                              onChanged: (val) => setState(() => _searchQuery = val),
+                              decoration: InputDecoration(
+                                hintText: "Search projects...",
+                                prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                                filled: true,
+                                fillColor: Colors.white,
+                                contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 20),
+                                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide(color: Colors.grey.shade300)),
+                                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: const BorderSide(color: Colors.lightGreen)),
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+
+                            // 4. UPDATED: Header Row with Toggle
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text('All Projects', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+
+                                // Toggle Container
+                                Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey[300],
+                                    borderRadius: BorderRadius.circular(24),
+                                  ),
+                                  padding: const EdgeInsets.all(3),
+                                  child: Row(
+                                    children: [
+                                      _buildFilterBtn(Icons.apps, 'all', 'All Projects'),
+                                      _buildFilterBtn(Icons.grid_view, 'classification', 'Classification Only'),
+                                      _buildFilterBtn(Icons.brush, 'segmentation', 'Segmentation Only'),
+                                    ],
+                                  ),
+                                )
+                              ],
+                            ),
+
+                            const SizedBox(height:10),
+                            SingleChildScrollView(
+                                child: ProjectList(
+                                    dataList: filteredData,
+                                    onRefresh: () =>  _loadFolders()
+                                )
+                            )
+                          ]
+                      ),
+                    ),
+                  ],
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
