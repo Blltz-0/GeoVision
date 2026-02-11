@@ -516,49 +516,82 @@ class _ImagesPageState extends State<ImagesPage> {
     final String newPath = '${projectDir.path}/$forcedFileName';
 
     try {
-      // 1. EXTRACT METADATA
+      // 1. EXTRACT METADATA FROM SOURCE (Before processing)
       Position? importedPosition;
+      DateTime extractedTime = DateTime.now(); // Default to now
+      bool timeFound = false;
+
       try {
+        // A. Try getting EXIF Data
         final exif = await Exif.fromPath(file.path);
         final latLong = await exif.getLatLong();
+
+        // B. Get Date from EXIF (using the helper we made, or manually here)
+        final dateString = await exif.getAttribute('DateTimeOriginal');
         await exif.close();
 
+        // Handle Coordinates
         if (latLong != null) {
           importedPosition = Position(
               latitude: latLong.latitude,
               longitude: latLong.longitude,
-              timestamp: DateTime.now(),
+              timestamp: DateTime.now(), // Placeholder, we use extractedTime variable below
               accuracy: 0, altitude: 0, heading: 0, speed: 0,
               speedAccuracy: 0, altitudeAccuracy: 0, headingAccuracy: 0
           );
+        }
+
+        // Handle Time
+        if (dateString != null) {
+          try {
+            // Fix format 2023:10:01 12:00:00 -> 2023-10-01 12:00:00
+            String fmt = dateString.replaceFirst(':', '-').replaceFirst(':', '-');
+            extractedTime = DateTime.parse(fmt);
+            timeFound = true;
+          } catch (e) {
+            debugPrint("Date parse error: $e");
+          }
         }
       } catch (e) {
         debugPrint("Metadata extraction error: $e");
       }
 
+      // C. Fallback: If EXIF date missing, use File Modified Date
+      if (!timeFound) {
+        try {
+          extractedTime = await File(file.path).lastModified();
+        } catch (e) {
+          debugPrint("Could not get file modified time");
+        }
+      }
+
       // 2. Copy and Process Image
+      // Note: image processing (padToSquare) usually strips metadata!
       await File(file.path).copy(newPath);
       String? processedPath = await padToSquare(newPath);
       if (processedPath == null) return null;
 
       await FileImage(File(processedPath)).evict();
 
-      // 3. EMBED METADATA
+      // 3. RE-EMBED METADATA (Crucial step)
+      // We explicitly write the old time and location onto the new processed file
       await MetadataService.embedMetadata(
         filePath: processedPath,
         lat: importedPosition?.latitude ?? 0.0,
         lng: importedPosition?.longitude ?? 0.0,
         className: targetClass,
-        time: DateTime.now(),
+        time: extractedTime, // Use the extracted time!
       );
 
-      // 4. SAVE TO DATABASE (Now writes to GeoJSON)
+      // 4. SAVE TO DATABASE
+      // We modify saveToCsv to accept the time override
       await MetadataService.saveToCsv(
         projectName: widget.projectName,
         imagePath: processedPath,
         position: importedPosition,
         className: targetClass,
         projectType: widget.projectType,
+        customTime: extractedTime,
       );
 
       return processedPath;

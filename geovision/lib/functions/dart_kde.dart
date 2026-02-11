@@ -2,12 +2,44 @@ import 'dart:math';
 import 'package:image/image.dart' as img;
 
 class DartKDE {
-
   static double _gaussianKernel(double distance, double bandwidth) {
-    return (1 / (sqrt(2 * pi) * bandwidth)) * exp(-(distance * distance) / (2 * bandwidth * bandwidth));
+    return (1 / (sqrt(2 * pi) * bandwidth)) *
+        exp(-(distance * distance) / (2 * bandwidth * bandwidth));
   }
 
-  static img.Image generateHeatmapOnMap({
+  /// Helper for perceptually smooth color transitions
+  static img.ColorRgba8 _getSmoothColor(double t) {
+    // Gradient: Deep Purple -> Red -> Orange -> Pale Yellow
+    final colors = [
+      [40, 0, 80],     // 0.0: Deep Purple
+      [180, 0, 50],    // 0.25: Red
+      [255, 100, 0],   // 0.5: Orange
+      [255, 200, 0],   // 0.75: Amber
+      [255, 255, 180], // 1.0: Hot Yellow
+    ];
+
+    // Map normalized value (0-1) to color indices
+    double scaledT = t * (colors.length - 1);
+    int index = scaledT.floor();
+    double fraction = scaledT - index;
+
+    // Boundary safety
+    if (index >= colors.length - 1) return img.ColorRgba8(255, 255, 180, 200);
+
+    var c1 = colors[index];
+    var c2 = colors[index + 1];
+
+    int r = (c1[0] + (c2[0] - c1[0]) * fraction).toInt();
+    int g = (c1[1] + (c2[1] - c1[1]) * fraction).toInt();
+    int b = (c1[2] + (c2[2] - c1[2]) * fraction).toInt();
+
+    // Smooth alpha transition: starts at 50 transparency, ends at 210
+    int a = (t * 160 + 50).toInt().clamp(0, 210);
+
+    return img.ColorRgba8(r, g, b, a);
+  }
+
+  static img.Image generateWeightedHeatmap({
     required List<Map<String, double>> points,
     required int width,
     required int height,
@@ -16,70 +48,50 @@ class DartKDE {
     required double minLng,
     required double maxLng,
   }) {
-    // 1. Setup Image (Transparent)
     final heatmapImage = img.Image(width: width, height: height, numChannels: 4);
     img.fill(heatmapImage, color: img.ColorRgba8(0, 0, 0, 0));
 
-    // DYNAMIC BANDWIDTH
-    // Instead of fixed 0.0005, we calculate it based on the map's latitude span.
-    // "Span / 40" means a single point's glow will cover roughly 1/40th of the map height.
     double latSpan = maxLat - minLat;
-    double bandwidth = latSpan / 40.0;
+    double lngSpan = maxLng - minLng;
+    double bandwidth = (latSpan / 40.0).clamp(0.0001, 0.5);
 
-    // Safety clamps: Don't let it get microscopic or massive
-    // 0.0001 is approx 10m, 0.5 is approx 50km
-    bandwidth = bandwidth.clamp(0.0001, 0.5);
-
-    // 2. Setup Grid
     List<List<double>> densityGrid = List.generate(height, (_) => List.filled(width, 0.0));
     double maxDensity = 0.0;
 
-    // 3. Calculate Density
-    for (int y = 0; y < height; y++) {
-      double currentLat = maxLat - (y / height) * (maxLat - minLat);
+    for (var p in points) {
+      double pLat = p['lat']!;
+      double pLng = p['lng']!;
+      double pWeight = p['weight'] ?? 1.0;
 
-      for (int x = 0; x < width; x++) {
-        double currentLng = minLng + (x / width) * (maxLng - minLng);
-        double sumDensity = 0.0;
+      int centerX = (((pLng - minLng) / lngSpan) * width).toInt();
+      int centerY = (((maxLat - pLat) / latSpan) * height).toInt();
+      int pixelRadius = ((bandwidth * 4 / latSpan) * height).toInt();
 
-        for (var p in points) {
-          // Optimization: Skip points too far for this dynamic bandwidth
-          if ((p['lat']! - currentLat).abs() > bandwidth * 4) continue;
-          if ((p['lng']! - currentLng).abs() > bandwidth * 4) continue;
+      for (int y = (centerY - pixelRadius).clamp(0, height - 1);
+      y <= (centerY + pixelRadius).clamp(0, height - 1); y++) {
+        double currentLat = maxLat - (y / height) * latSpan;
+        for (int x = (centerX - pixelRadius).clamp(0, width - 1);
+        x <= (centerX + pixelRadius).clamp(0, width - 1); x++) {
+          double currentLng = minLng + (x / width) * lngSpan;
 
-          double dLat = currentLat - p['lat']!;
-          double dLng = currentLng - p['lng']!;
-          double dist = sqrt(dLat*dLat + dLng*dLng);
+          double dLat = currentLat - pLat;
+          double dLng = currentLng - pLng;
+          double dist = sqrt(dLat * dLat + dLng * dLng);
 
           if (dist < bandwidth * 4) {
-            sumDensity += _gaussianKernel(dist, bandwidth);
+            densityGrid[y][x] += _gaussianKernel(dist, bandwidth) * pWeight;
+            if (densityGrid[y][x] > maxDensity) maxDensity = densityGrid[y][x];
           }
         }
-        densityGrid[y][x] = sumDensity;
-        if (sumDensity > maxDensity) maxDensity = sumDensity;
       }
     }
 
-    // 4. Paint Pixels
     for (int y = 0; y < height; y++) {
       for (int x = 0; x < width; x++) {
         double normalized = maxDensity > 0 ? densityGrid[y][x] / maxDensity : 0;
-
+        // Ignore extremely low density for a clean map
         if (normalized >= 0.05) {
-          int r = 0, g = 0, b = 0;
-          // Blue -> Green -> Red gradient
-          if (normalized < 0.33) {
-            double t = normalized / 0.33;
-            r = 0; g = (t * 255).toInt(); b = 255;
-          } else if (normalized < 0.66) {
-            double t = (normalized - 0.33) / 0.33;
-            r = (t * 255).toInt(); g = 255; b = (255 * (1-t)).toInt();
-          } else {
-            double t = (normalized - 0.66) / 0.34;
-            r = 255; g = (255 * (1-t)).toInt(); b = 0;
-          }
-          int a = (normalized * 200 + 55).clamp(0, 200).toInt();
-          heatmapImage.setPixel(x, y, img.ColorRgba8(r, g, b, a));
+          heatmapImage.setPixel(x, y, _getSmoothColor(normalized));
         }
       }
     }

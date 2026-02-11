@@ -145,11 +145,8 @@ class _MapPageState extends State<MapPage> {
     List<WeightedLatLng> heatmapPoints = [];
 
     for (var point in widget.mapData) {
-      // --- GEOJSON COMPATIBILITY FIX ---
       double lat = (point['lat'] as num?)?.toDouble() ?? 0.0;
       double lng = (point['lng'] as num?)?.toDouble() ?? 0.0;
-      // ---------------------------------
-
       String pointClass = point['class'] ?? "Unclassified";
       String timeStr = point['time'] ?? "";
 
@@ -158,22 +155,17 @@ class _MapPageState extends State<MapPage> {
       // 1. DATE FILTER
       if (_selectedDateRange != null && timeStr.isNotEmpty) {
         try {
-          DateTime pointDate = DateTime.parse(timeStr);
-          DateTime start = _selectedDateRange!.start;
-          DateTime end = _selectedDateRange!.end.add(const Duration(days: 1)).subtract(const Duration(seconds: 1));
+          DateTime pointDate = DateTime.parse(timeStr).toLocal();
+          // Set start to beginning of day, end to very end of day
+          DateTime start = DateTime(_selectedDateRange!.start.year, _selectedDateRange!.start.month, _selectedDateRange!.start.day);
+          DateTime end = DateTime(_selectedDateRange!.end.year, _selectedDateRange!.end.month, _selectedDateRange!.end.day, 23, 59, 59);
 
-          if (pointDate.isBefore(start) || pointDate.isAfter(end)) {
-            continue;
-          }
-        } catch (e) {
-          // ignore error
-        }
+          if (pointDate.isBefore(start) || pointDate.isAfter(end)) continue;
+        } catch (_) {}
       }
 
-      // 2. CLASS FILTER (Only apply if not All)
-      if (_filterClass != "All" && pointClass != _filterClass) {
-        continue;
-      }
+      // 2. CLASS FILTER
+      if (_filterClass != "All" && pointClass != _filterClass) continue;
 
       // 3. CREATE MARKER
       filteredMarkers.add(
@@ -325,40 +317,52 @@ class _MapPageState extends State<MapPage> {
   }
 
   Future<void> _pickDateRange() async {
-    // 1. Create a set of "Midnight" dates that actually have images
-    final Set<DateTime> datesWithData = widget.mapData
-        .where((point) {
-      // Filter by class first if needed
-      if (_filterClass != "All" && (point['class'] ?? "Unclassified") != _filterClass) return false;
-      return point['time'] != null && point['time'].toString().isNotEmpty;
-    })
+    // 1. Helper: Force ANY DateTime into a pure YYYY-MM-DD string regardless of timezone
+    String toNormalKey(DateTime dt) {
+      // Using toLocal() ensures we match the user's current calendar view
+      final local = dt.toLocal();
+      return "${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}";
+    }
+
+    // 2. Build the available dates set (Ignore Class filtering here for safety)
+    final Set<String> availableDates = widget.mapData
+        .where((point) => point['time'] != null && point['time'].toString().isNotEmpty)
         .map((point) {
       try {
-        // Parse the ISO string
-        DateTime dt = DateTime.parse(point['time']);
-        // IMPORTANT: Normalize to midnight so the picker can match it
-        return DateTime(dt.year, dt.month, dt.day);
+        // 1. Parse the date
+        DateTime dt = DateTime.parse(point['time'].toString());
+        // 2. Force to Local before turning into a string key
+        DateTime local = dt.toLocal();
+        return "${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}";
       } catch (e) {
         return null;
       }
     })
-        .whereType<DateTime>() // Remove nulls from failed parses
+        .whereType<String>()
         .toSet();
 
-    // 2. Open the picker
+    // console check: copy-paste these into a notepad to verify they look like "2026-02-08"
+    debugPrint("🟢 Unlocking these dates: $availableDates");
+
     DateTimeRange? newRange = await showDateRangePicker(
       context: context,
-      firstDate: DateTime(2020),
-      lastDate: DateTime.now(),
+      firstDate: DateTime(2010),
+      lastDate: DateTime(2030),
       initialDateRange: _selectedDateRange,
-      // Ensure the signature matches your Flutter version (3 arguments)
-      selectableDayPredicate: (DateTime date, DateTime? start, DateTime? end) {
-        // If the set is empty (no images found), allow all dates so the user isn't stuck
-        if (datesWithData.isEmpty) return true;
 
-        // Only allow selection of dates that actually have data
-        return datesWithData.contains(DateTime(date.year, date.month, date.day));
+      // The 3-parameter signature your specific Flutter version requires
+      selectableDayPredicate: availableDates.isEmpty
+          ? null
+          : (DateTime day, DateTime? start, DateTime? end) {
+        final String key = toNormalKey(day);
+        final bool isAvailable = availableDates.contains(key);
+
+        // Use this to debug in real-time if a specific date stays locked
+        // debugPrint("Checking $key : $isAvailable");
+
+        return isAvailable;
       },
+
       builder: (context, child) {
         return Theme(
           data: Theme.of(context).copyWith(

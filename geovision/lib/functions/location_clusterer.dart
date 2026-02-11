@@ -2,34 +2,43 @@ import 'dart:math';
 
 class LocationClusterer {
   /// Groups points that are within [maxDistanceKm] of each other.
+  /// Uses a queue-based density approach to capture continuous regions.
   static List<List<Map<String, double>>> clusterPoints(
       List<Map<String, double>> allPoints,
-      double maxDistanceKm
+      double maxDistanceKm,
       ) {
     if (allPoints.isEmpty) return [];
 
     List<List<Map<String, double>>> clusters = [];
-    // Work on a copy to avoid side effects
-    List<Map<String, double>> remaining = List.from(allPoints);
+    Set<int> visited = {};
 
-    while (remaining.isNotEmpty) {
-      var currentCluster = <Map<String, double>>[];
-      var seed = remaining.removeAt(0);
-      currentCluster.add(seed);
+    for (int i = 0; i < allPoints.length; i++) {
+      if (visited.contains(i)) continue;
 
-      // Using a standard for-loop back-to-front for safe removal
-      for (int i = remaining.length - 1; i >= 0; i--) {
-        var point = remaining[i];
-        double dist = _haversine(
-            seed['lat']!,
-            seed['lng']!,
-            point['lat']!,
-            point['lng']!
-        );
+      List<Map<String, double>> currentCluster = [];
+      List<int> queue = [i];
+      visited.add(i);
 
-        if (dist <= maxDistanceKm) {
-          currentCluster.add(point);
-          remaining.removeAt(i);
+      int qIdx = 0;
+      while (qIdx < queue.length) {
+        int currentIndex = queue[qIdx++];
+        var currentPoint = allPoints[currentIndex];
+        currentCluster.add(currentPoint);
+
+        for (int j = 0; j < allPoints.length; j++) {
+          if (visited.contains(j)) continue;
+
+          double dist = _haversine(
+            currentPoint['lat']!,
+            currentPoint['lng']!,
+            allPoints[j]['lat']!,
+            allPoints[j]['lng']!,
+          );
+
+          if (dist <= maxDistanceKm) {
+            visited.add(j);
+            queue.add(j);
+          }
         }
       }
       clusters.add(currentCluster);

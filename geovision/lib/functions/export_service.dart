@@ -199,6 +199,7 @@ class ExportService {
       await cocoFile.writeAsString(jsonEncode(fullCocoJson));
       tempFiles.add(cocoFile);
 
+      // --- 5. GENERATE MAPS (Continent-Safe Clustering) ---
       // --- 5. GENERATE MAPS ---
       List<Map<String, double>> points = geoData.map((e) => {
         'lat': (e['lat'] as num).toDouble(),
@@ -206,7 +207,13 @@ class ExportService {
       }).toList();
 
       if (points.isNotEmpty) {
-        var clusters = LocationClusterer.clusterPoints(points, 500.0);
+        // MOVE THE CLUSTERING TO THE BACKGROUND
+        // We pass a Map because compute() only takes one argument
+        final clusters = await compute(_clusterPointsInBackground, {
+          'points': points,
+          'distance': 500.0,
+        });
+
         for (int i = 0; i < clusters.length; i++) {
           final mapImg = await MapCompositor.generateFinalMap(clusters[i]);
           if (mapImg != null) {
@@ -219,7 +226,7 @@ class ExportService {
         }
       }
 
-      // --- 6. CREATE README.txt ---
+      // --- 6. CREATE README.txt (Updated with Dynamic Map List) ---
       final readmeFile = File('${sourceDir.path}/README.txt');
       final now = DateTime.now();
       final dateStr = "${now.year}-${now.month.toString().padLeft(2,'0')}-${now.day.toString().padLeft(2,'0')}";
@@ -234,7 +241,9 @@ class ExportService {
       readmeBuffer.writeln(" ├── _annotations.coco.json (Master COCO Labels)");
       readmeBuffer.writeln(" ├── project_data.geojson   (Standard GIS Metadata)");
       readmeBuffer.writeln(" ├── images/                (Source Images)");
-      readmeBuffer.writeln(" ├── map_overview_X.png      (Location Previews)");
+
+      // Document that there might be multiple maps
+      readmeBuffer.writeln(" ├── map_overview_X.png      (Location Previews - Multiple if global)");
 
       await readmeFile.writeAsString(readmeBuffer.toString());
       tempFiles.add(readmeFile);
@@ -321,4 +330,12 @@ void _zipInBackground(List<String> paths) {
   } catch (e) {
     debugPrint("Zip Error: $e");
   }
+}
+
+List<List<Map<String, double>>> _clusterPointsInBackground(Map<String, dynamic> params) {
+  final List<Map<String, double>> points = params['points'];
+  final double distance = params['distance'];
+
+  // This calls your existing LocationClusterer logic
+  return LocationClusterer.clusterPoints(points, distance);
 }

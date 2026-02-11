@@ -1,7 +1,8 @@
+import 'dart:io';
 import 'dart:math';
-import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:image/image.dart' as img;
+import 'package:path_provider/path_provider.dart';
 
 import 'dart_kde.dart';
 import 'tile_math.dart';
@@ -13,13 +14,11 @@ class MapCompositor {
   static Future<img.Image?> generateFinalMap(List<Map<String, double>> points) async {
     if (points.isEmpty) return null;
 
-    // 1. Determine Data Bounds
     double minLat = points.map((e) => e['lat']!).reduce(min);
     double maxLat = points.map((e) => e['lat']!).reduce(max);
     double minLng = points.map((e) => e['lng']!).reduce(min);
     double maxLng = points.map((e) => e['lng']!).reduce(max);
 
-    // Enforce minimum spread for single-point projects
     const double minSpread = 0.005;
     if ((maxLat - minLat) < minSpread) {
       double center = (maxLat + minLat) / 2;
@@ -32,13 +31,11 @@ class MapCompositor {
       maxLng = center + (minSpread / 2);
     }
 
-    // Aesthetic Buffer (10%)
     double latBuf = (maxLat - minLat) * 0.1;
     double lngBuf = (maxLng - minLng) * 0.1;
     double dMinLat = minLat - latBuf, dMaxLat = maxLat + latBuf;
     double dMinLng = minLng - lngBuf, dMaxLng = maxLng + lngBuf;
 
-    // 2. Calculate Zoom Level
     int zoom = 17;
     int width = 0, height = 0;
     int startX = 0, endX = 0, startY = 0, endY = 0;
@@ -48,49 +45,44 @@ class MapCompositor {
       var br = TileMath.getTileIndex(dMinLat, dMaxLng, zoom);
       startX = tl.x; endX = br.x;
       startY = tl.y; endY = br.y;
-
       width = (endX - startX + 1) * tileSize;
       height = (endY - startY + 1) * tileSize;
-
       if (width <= maxDimension && height <= maxDimension) break;
       zoom--;
     }
 
-    // 3. Create Canvas
     img.Image fullCanvas = img.Image(width: width, height: height);
-    img.fill(fullCanvas, color: img.ColorRgb8(240, 240, 240)); // Light grey background
+    img.fill(fullCanvas, color: img.ColorRgb8(240, 240, 240));
 
-    // 4. Download Tiles with Retry
+    // --- CACHE & DOWNLOAD LOGIC ---
+    final cacheDir = await getTemporaryDirectory();
     final client = http.Client();
     try {
       for (int x = startX; x <= endX; x++) {
         for (int y = startY; y <= endY; y++) {
-          await Future.delayed(const Duration(milliseconds: 250)); // Throttling
-
-          final url = Uri.parse('https://tile.openstreetmap.org/$zoom/$x/$y.png');
+          final cachePath = '${cacheDir.path}/tile_cache/$zoom/$x/$y.png';
+          final cacheFile = File(cachePath);
           img.Image? tile;
 
-          // Simple Retry Logic
-          for (int attempt = 0; attempt < 2; attempt++) {
+          if (await cacheFile.exists()) {
+            tile = img.decodePng(await cacheFile.readAsBytes());
+          } else {
+            await Future.delayed(const Duration(milliseconds: 100)); // Rate limit
+            final url = Uri.parse('https://tile.openstreetmap.org/$zoom/$x/$y.png');
             try {
-              final response = await client.get(url, headers: {
-                'User-Agent': 'GeoVisionProject/1.0'
-              }).timeout(const Duration(seconds: 5));
-
+              final response = await client.get(url, headers: {'User-Agent': 'GeoVision/1.0'});
               if (response.statusCode == 200) {
                 tile = img.decodePng(response.bodyBytes);
-                break;
+                // Save to cache
+                await cacheFile.create(recursive: true);
+                await cacheFile.writeAsBytes(response.bodyBytes);
               }
             } catch (_) {}
           }
 
           if (tile != null) {
-            img.compositeImage(
-                fullCanvas,
-                tile,
-                dstX: (x - startX) * tileSize,
-                dstY: (y - startY) * tileSize
-            );
+            img.compositeImage(fullCanvas, tile,
+                dstX: (x - startX) * tileSize, dstY: (y - startY) * tileSize);
           }
         }
       }
@@ -98,8 +90,7 @@ class MapCompositor {
       client.close();
     }
 
-    // 5. Heatmap Layer
-    final heatmapLayer = DartKDE.generateHeatmapOnMap(
+    final heatmapLayer = DartKDE.generateWeightedHeatmap(
       points: points,
       width: width,
       height: height,
@@ -110,7 +101,6 @@ class MapCompositor {
     );
     img.compositeImage(fullCanvas, heatmapLayer, blend: img.BlendMode.alpha);
 
-    // 6. Final Crop
     var p1 = TileMath.latLngToPixel(dMaxLat, dMinLng, zoom);
     var p2 = TileMath.latLngToPixel(dMinLat, dMaxLng, zoom);
     double oX = startX * 256.0;

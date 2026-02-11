@@ -8,7 +8,24 @@ class AboutPage extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         title: const Text('About GeoVision'),
-        backgroundColor: Colors.lightGreenAccent,
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        flexibleSpace: Container(
+          decoration: BoxDecoration(
+              gradient: LinearGradient(
+                  begin: Alignment.centerLeft,
+                  end: Alignment.centerRight,
+                  colors: [
+                    ?Colors.lightGreen[300],
+                    ?Colors.lightGreen[400],
+                    ?Colors.lightGreen[400],
+                    ?Colors.lightGreen[500],
+                    ?Colors.lightGreen[500],
+                    ?Colors.lightGreen[600],
+                    ?Colors.lightGreen[700],
+                  ])
+          ),
+        ),
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(24.0),

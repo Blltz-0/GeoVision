@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:native_exif/native_exif.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:path/path.dart' as p; // Use path package for safe filename handling
 
 class MetadataService {
   static Future<void> _saveLock = Future.value();
@@ -14,7 +15,7 @@ class MetadataService {
     return File('${appDir.path}/projects/$projectName/project_data.geojson');
   }
 
-  // --- 1. REBUILD DATABASE (The "Nuclear" Sync - GeoJSON Version) ---
+  // --- 1. REBUILD DATABASE (The "Smart" Sync - Preserves Data) ---
   static Future<void> rebuildProjectData(String projectName, {String projectType = 'classification'}) async {
     final appDir = await getApplicationDocumentsDirectory();
     final projectDir = Directory('${appDir.path}/projects/$projectName/images');
@@ -23,7 +24,28 @@ class MetadataService {
 
     if (!await projectDir.exists()) return;
 
-    // 1. Load Valid Classes (The "Whitelist")
+    // 1. Load EXISTING GeoJSON to preserve metadata (The Fix)
+    Map<String, Map<String, dynamic>> existingData = {};
+    if (await geoFile.exists()) {
+      try {
+        final content = await geoFile.readAsString();
+        if (content.isNotEmpty) {
+          final json = jsonDecode(content);
+          if (json['features'] != null) {
+            for (var f in json['features']) {
+              // We use filename as the key to map data back
+              String rawPath = f['properties']['path'] ?? "";
+              String name = p.basename(rawPath);
+              existingData[name] = f;
+            }
+          }
+        }
+      } catch (e) {
+        debugPrint("Error reading existing GeoJSON: $e");
+      }
+    }
+
+    // 2. Load Valid Classes
     Set<String> validClasses = {'Unclassified'};
     if (await classFile.exists()) {
       try {
@@ -34,49 +56,68 @@ class MetadataService {
       } catch (_) {}
     }
 
-    // 2. Scan Files
+    // 3. Scan Files
     List<FileSystemEntity> entities = await projectDir.list().toList();
     List<Map<String, dynamic>> features = [];
 
     for (var entity in entities) {
       if (entity is! File) continue;
       String path = entity.path;
-      String filename = path.split(Platform.pathSeparator).last;
+      String filename = p.basename(path);
 
-      if (!filename.toLowerCase().endsWith('.jpg') && !filename.toLowerCase().endsWith('.png')) continue;
+      if (!filename.toLowerCase().endsWith('.jpg') && !filename.toLowerCase().endsWith('.png') && !filename.toLowerCase().endsWith('.jpeg')) continue;
+
+      // --- CRITICAL FIX: CHECK EXISTING DATA FIRST ---
+      Map<String, dynamic>? existingFeature = existingData[filename];
 
       String finalClass = "Unclassified";
       double lat = 0.0;
       double lng = 0.0;
+      String time = entity.lastModifiedSync().toIso8601String();
 
-      // 3. Extract and VALIDATE class from filename
-      if (projectType == 'classification') {
-        List<String> parts = filename.split('_');
-        if (parts.length >= 2) {
-          String candidate = parts[1];
-          // Check if the filename-extracted class is actually in our classes.json
-          if (validClasses.contains(candidate)) {
-            finalClass = candidate;
-          } else {
-            debugPrint("⚠️ Validation: Class '$candidate' not found in project definitions. Resetting $filename to Unclassified.");
-            finalClass = "Unclassified";
+      // CASE A: We have data in GeoJSON already. Use it!
+      if (existingFeature != null) {
+        var coords = existingFeature['geometry']['coordinates'];
+        var props = existingFeature['properties'];
+
+        // Preserve location
+        if (coords != null && coords.length >= 2) {
+          lng = (coords[0] as num).toDouble();
+          lat = (coords[1] as num).toDouble();
+        }
+
+        // Preserve class & time
+        if (props['class'] != null) finalClass = props['class'];
+        if (props['time'] != null) time = props['time'];
+      }
+      // CASE B: New file, try to extract metadata
+      else {
+        // Try filename parsing for class
+        if (projectType == 'classification') {
+          List<String> parts = filename.split('_');
+          if (parts.length >= 2) {
+            String candidate = parts[1];
+            if (validClasses.contains(candidate)) {
+              finalClass = candidate;
+            }
           }
         }
-      }
 
-      // 4. Extract EXIF
-      try {
-        final exif = await Exif.fromPath(path);
-        final latLong = await exif.getLatLong();
-        await exif.close();
-        if (latLong != null) {
-          lat = latLong.latitude;
-          lng = latLong.longitude;
+        // Try EXIF for location
+        try {
+          final exif = await Exif.fromPath(path);
+          final latLong = await exif.getLatLong();
+          await exif.close();
+          if (latLong != null) {
+            lat = latLong.latitude;
+            lng = latLong.longitude;
+          }
+        } catch (e) {
+          debugPrint("⚠️ EXIF Read Error for $filename: $e");
         }
-      } catch (e) {
-        debugPrint("⚠️ EXIF Read Error for $filename: $e");
       }
 
+      // 4. Construct Feature
       features.add({
         "type": "Feature",
         "geometry": {
@@ -86,7 +127,7 @@ class MetadataService {
         "properties": {
           "path": path,
           "class": projectType == 'segmentation' ? "" : finalClass,
-          "time": entity.lastModifiedSync().toIso8601String(),
+          "time": time,
         }
       });
     }
@@ -97,7 +138,7 @@ class MetadataService {
     };
 
     await geoFile.writeAsString(jsonEncode(geoJson));
-    debugPrint("✅ GeoJSON Database Rebuilt and Validated for $projectName");
+    debugPrint("✅ GeoJSON Database Rebuilt (Preserved ${existingData.length} records) for $projectName");
   }
 
   // --- 2. SAVE TO DATABASE (Append/Update GeoJSON) ---
@@ -107,6 +148,7 @@ class MetadataService {
     required Position? position,
     String? className,
     String projectType = 'classification',
+    DateTime? customTime, // Added support for custom time
   }) async {
     _saveLock = _saveLock.then((_) async {
       final geoFile = await _getGeoJsonFile(projectName);
@@ -129,10 +171,16 @@ class MetadataService {
 
       final double lat = position?.latitude ?? 0.0;
       final double lng = position?.longitude ?? 0.0;
-      final String timestamp = DateTime.now().toIso8601String();
+      // Use custom time if provided (from upload), else now
+      final String timestamp = (customTime ?? DateTime.now()).toLocal().toIso8601String();
       final String finalClass = (className ?? 'Unclassified').replaceAll(',', '');
 
-      (geoData['features'] as List).add({
+      // Check if file already exists to prevent duplicates
+      List<dynamic> features = geoData['features'];
+      String filename = p.basename(imagePath);
+      features.removeWhere((f) => p.basename(f['properties']['path'] ?? "") == filename);
+
+      features.add({
         "type": "Feature",
         "geometry": {
           "type": "Point",
@@ -153,6 +201,9 @@ class MetadataService {
   // --- 3. READ DATA ---
   static Future<List<Map<String, dynamic>>> readCsvData(String projectName) async {
     final geoFile = await _getGeoJsonFile(projectName);
+    final appDir = await getApplicationDocumentsDirectory();
+    final projectDir = Directory('${appDir.path}/projects/$projectName/images'); // Current valid path
+
     List<Map<String, dynamic>> dataPoints = [];
 
     if (await geoFile.exists()) {
@@ -165,11 +216,16 @@ class MetadataService {
           final geometry = feature['geometry'] ?? {};
           final coords = geometry['coordinates'] ?? [0.0, 0.0];
 
+          // Reconstruct path to handle app sandbox changes (UUID changes on restart)
+          String rawPath = props['path'] ?? "";
+          String filename = p.basename(rawPath);
+          String currentValidPath = '${projectDir.path}/$filename';
+
           dataPoints.add({
-            "path": props['path'] ?? "",
+            "path": currentValidPath,
             "class": props['class'] ?? "Unclassified",
-            "lat": (coords[1] as num).toDouble(), // Geographic Lat is index 1
-            "lng": (coords[0] as num).toDouble(), // Geographic Lng is index 0
+            "lat": (coords[1] as num).toDouble(),
+            "lng": (coords[0] as num).toDouble(),
             "time": props['time'] ?? "",
           });
         }
@@ -228,7 +284,7 @@ class MetadataService {
 
         features.removeWhere((f) {
           String path = f['properties']['path'] ?? "";
-          return path.split(Platform.pathSeparator).last == filename;
+          return p.basename(path) == filename;
         });
 
         await geoFile.writeAsString(jsonEncode(geoJson));
@@ -245,13 +301,15 @@ class MetadataService {
     required String newClassName,
   }) async {
     final geoFile = await _getGeoJsonFile(projectName);
+    String filename = p.basename(imagePath);
 
     if (await geoFile.exists()) {
       final Map<String, dynamic> geoJson = jsonDecode(await geoFile.readAsString());
       final List features = geoJson['features'];
 
       for (var f in features) {
-        if (f['properties']['path'] == imagePath) {
+        String fName = p.basename(f['properties']['path'] ?? "");
+        if (fName == filename) {
           f['properties']['class'] = newClassName;
         }
       }
@@ -269,13 +327,15 @@ class MetadataService {
     String projectType = 'classification',
   }) async {
     final geoFile = await _getGeoJsonFile(projectName);
+    String filename = p.basename(imagePath);
 
     if (await geoFile.exists()) {
       final Map<String, dynamic> geoJson = jsonDecode(await geoFile.readAsString());
       final List features = geoJson['features'];
 
       for (var f in features) {
-        if (f['properties']['path'] == imagePath) {
+        String fName = p.basename(f['properties']['path'] ?? "");
+        if (fName == filename) {
           f['geometry']['coordinates'] = [lng, lat];
           f['properties']['time'] = time.toIso8601String();
         }
@@ -302,9 +362,25 @@ class MetadataService {
     }
   }
 
+  static Future<void> addLabelDefinition(String projectName, String className, int colorValue) async {
+    final appDir = await getApplicationDocumentsDirectory();
+    final file = File('${appDir.path}/projects/$projectName/labels.json');
+    List<dynamic> classes = (await file.exists()) ? jsonDecode(await file.readAsString()) : [];
+    if (!classes.any((c) => c['name'] == className)) {
+      classes.add({'name': className, 'color': colorValue});
+      await file.writeAsString(jsonEncode(classes));
+    }
+  }
+
   static Future<List<Map<String, dynamic>>> getClasses(String projectName) async {
     final appDir = await getApplicationDocumentsDirectory();
     final file = File('${appDir.path}/projects/$projectName/classes.json');
+    return (await file.exists()) ? List<Map<String, dynamic>>.from(jsonDecode(await file.readAsString())) : [];
+  }
+
+  static Future<List<Map<String, dynamic>>> getLabels(String projectName) async {
+    final appDir = await getApplicationDocumentsDirectory();
+    final file = File('${appDir.path}/projects/$projectName/labels.json');
     return (await file.exists()) ? List<Map<String, dynamic>>.from(jsonDecode(await file.readAsString())) : [];
   }
 
@@ -312,7 +388,7 @@ class MetadataService {
     final File imageFile = File(imagePath);
     if (await imageFile.exists()) await imageFile.delete();
 
-    final filename = imagePath.split(Platform.pathSeparator).last;
+    final filename = p.basename(imagePath);
     await removeEntry(projectName, filename);
   }
 
@@ -329,10 +405,43 @@ class MetadataService {
     await _bulkUpdateCsvClass(projectName, className, "Unclassified");
   }
 
+  static Future<void> deleteLabel(String projectName, String className) async {
+    final directory = await getApplicationDocumentsDirectory();
+    final projectDir = Directory('${directory.path}/projects/$projectName');
+    final classFile = File('${projectDir.path}/labels.json');
+
+    if (await classFile.exists()) {
+      List<dynamic> jsonList = jsonDecode(await classFile.readAsString());
+      jsonList.removeWhere((c) => c['name'] == className);
+      await classFile.writeAsString(jsonEncode(jsonList));
+    }
+    await _bulkUpdateCsvClass(projectName, className, "Unclassified");
+  }
+
   static Future<void> updateClass(String projectName, String oldName, String newName, int newColor) async {
     final directory = await getApplicationDocumentsDirectory();
     final projectDir = Directory('${directory.path}/projects/$projectName');
     final classFile = File('${projectDir.path}/classes.json');
+
+    if (await classFile.exists()) {
+      List<dynamic> jsonList = jsonDecode(await classFile.readAsString());
+      for (var c in jsonList) {
+        if (c['name'] == oldName) {
+          c['name'] = newName;
+          c['color'] = newColor;
+        }
+      }
+      await classFile.writeAsString(jsonEncode(jsonList));
+    }
+    if (oldName != newName) {
+      await _bulkUpdateCsvClass(projectName, oldName, newName);
+    }
+  }
+
+  static Future<void> updateLabel(String projectName, String oldName, String newName, int newColor) async {
+    final directory = await getApplicationDocumentsDirectory();
+    final projectDir = Directory('${directory.path}/projects/$projectName');
+    final classFile = File('${projectDir.path}/labels.json');
 
     if (await classFile.exists()) {
       List<dynamic> jsonList = jsonDecode(await classFile.readAsString());
@@ -382,7 +491,7 @@ class MetadataService {
 
     Set<String> names = existingNames ?? (await projectDir.list().toList())
         .whereType<File>()
-        .map((e) => e.path.split(Platform.pathSeparator).last)
+        .map((e) => p.basename(e.path))
         .toSet();
 
     int counter = 1;
@@ -409,9 +518,10 @@ class MetadataService {
     try {
       String cleanProject = projectName.replaceAll(RegExp(r'[^\w\s]+'), '').replaceAll(' ', '_');
       String cleanClass = newClassName.replaceAll(RegExp(r'[^\w\s]+'), '').replaceAll(' ', '_');
-      String currentFilename = oldImagePath.split(Platform.pathSeparator).last;
+      String currentFilename = p.basename(oldImagePath);
 
       if (currentFilename.startsWith("${cleanProject}_${cleanClass}_")) {
+        // Just update metadata
         await updateClassInCsv(projectName: projectName, imagePath: oldImagePath, newClassName: newClassName);
         await embedMetadata(filePath: oldImagePath, lat: 0, lng: 0, className: newClassName, updateClassOnly: true);
         return oldImagePath;
@@ -421,7 +531,12 @@ class MetadataService {
       String newImagePath = '${projectDir.path}/$newFileName';
 
       await oldFile.rename(newImagePath);
+
+      // We must save the new entry to GeoJSON manually or rebuild.
+      // Rebuild is safer to keep things in sync.
       await rebuildProjectData(projectName, projectType: projectType);
+
+      // Re-embed metadata on new file
       await embedMetadata(filePath: newImagePath, lat: 0, lng: 0, className: newClassName, updateClassOnly: true);
 
       return newImagePath;
@@ -429,53 +544,5 @@ class MetadataService {
       debugPrint("❌ Error tagging image: $e");
       return null;
     }
-  }
-
-  // --- LABEL MANAGEMENT ---
-  static Future<File> _getLabelsFile(String projectName) async {
-    final docDir = await getApplicationDocumentsDirectory();
-    final projectDir = Directory('${docDir.path}/projects/$projectName');
-    if (!await projectDir.exists()) await projectDir.create(recursive: true);
-    return File('${projectDir.path}/labels.json');
-  }
-
-  static Future<List<Map<String, dynamic>>> getLabels(String projectName) async {
-    try {
-      final file = await _getLabelsFile(projectName);
-      if (!await file.exists()) return [];
-      final content = await file.readAsString();
-      if (content.isEmpty) return [];
-      return List<Map<String, dynamic>>.from(jsonDecode(content));
-    } catch (e) {
-      debugPrint("Error reading labels: $e");
-      return [];
-    }
-  }
-
-  static Future<void> addLabelDefinition(String projectName, String name, int color) async {
-    final labels = await getLabels(projectName);
-    if (labels.any((l) => l['name'] == name)) return;
-    labels.add({'name': name, 'color': color});
-    await _saveLabelsToDisk(projectName, labels);
-  }
-
-  static Future<void> updateLabel(String projectName, String oldName, String newName, int newColor) async {
-    final labels = await getLabels(projectName);
-    final index = labels.indexWhere((l) => l['name'] == oldName);
-    if (index != -1) {
-      labels[index] = {'name': newName, 'color': newColor};
-      await _saveLabelsToDisk(projectName, labels);
-    }
-  }
-
-  static Future<void> deleteLabel(String projectName, String labelName) async {
-    final labels = await getLabels(projectName);
-    labels.removeWhere((l) => l['name'] == labelName);
-    await _saveLabelsToDisk(projectName, labels);
-  }
-
-  static Future<void> _saveLabelsToDisk(String projectName, List<Map<String, dynamic>> labels) async {
-    final file = await _getLabelsFile(projectName);
-    await file.writeAsString(jsonEncode(labels));
   }
 }
