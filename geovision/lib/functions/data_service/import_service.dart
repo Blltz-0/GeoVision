@@ -5,7 +5,7 @@ import 'package:archive/archive.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
-import 'metadata_handle.dart';
+import '../metadata_handle.dart';
 
 class ImportService {
   static Future<bool> importProject(BuildContext context) async {
@@ -16,6 +16,7 @@ class ImportService {
       );
 
       if (result == null || result.files.single.path == null) return false;
+
 
       File zipFile = File(result.files.single.path!);
       String rawName = result.files.single.name.replaceAll('.zip', '');
@@ -54,6 +55,7 @@ class ImportService {
       }
 
       await MetadataService.rebuildProjectData(projectName, projectType: projectType);
+
 
       return true;
     } catch (e) {

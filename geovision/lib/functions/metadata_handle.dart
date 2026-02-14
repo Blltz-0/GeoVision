@@ -478,6 +478,59 @@ class MetadataService {
     }
   }
 
+  static Future<int> getLatestIndex(
+      Directory projectDir,
+      String projectName,
+      String className,
+      {String projectType = 'classification'}
+      ) async {
+
+    if (!await projectDir.exists()) return 0;
+
+    // 1. Clean strings to match your naming convention
+    String cleanProject = projectName.replaceAll(RegExp(r'[^\w\s]+'), '').replaceAll(' ', '_');
+    String cleanClass = className.replaceAll(RegExp(r'[^\w\s]+'), '').replaceAll(' ', '_');
+    if (cleanClass.isEmpty && projectType == 'classification') cleanClass = "Unclassified";
+
+    // 2. Define the prefix we are looking for
+    String prefix = projectType == 'segmentation'
+        ? "${cleanProject}_"
+        : "${cleanProject}_${cleanClass}_";
+
+    int maxCount = 0;
+
+    // 3. Stream files (Memory efficient)
+    try {
+      await for (var entity in projectDir.list(followLinks: false)) {
+        if (entity is File) {
+          String name = p.basename(entity.path);
+
+          if (name.startsWith(prefix)) {
+            try {
+              // Remove prefix
+              String temp = name.substring(prefix.length);
+              // Remove extension
+              int dotIndex = temp.lastIndexOf('.');
+              if (dotIndex != -1) {
+                String numberPart = temp.substring(0, dotIndex);
+                int? val = int.tryParse(numberPart);
+                if (val != null && val > maxCount) {
+                  maxCount = val;
+                }
+              }
+            } catch (e) {
+              // Ignore malformed files
+            }
+          }
+        }
+      }
+    } catch (e) {
+      print("Error scanning directory index: $e");
+    }
+
+    return maxCount;
+  }
+
   // --- FILE RENAMING / TAGGING ---
   static Future<String> generateNextFileName(
       Directory projectDir,

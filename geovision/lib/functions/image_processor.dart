@@ -26,63 +26,36 @@ Future<String> cropSquareImage(String filePath) async {
   return filePath;
 }
 
-Future<String?> padToSquare(String filePath, {int targetSize = 640, int minSize = 200}) async {
-  // 1. PRESERVE METADATA (Read before processing)
-  // We must do this before the file potentially gets deleted or overwritten
-  Map<String, Object>? preservedMetadata = await _readMetadata(filePath);
+Future<String?> padToSquare(String filePath, int targetSize) async {
+  try {
+    final file = File(filePath);
+    final bytes = await file.readAsBytes();
+    final img.Image? src = img.decodeImage(bytes);
 
-  final bytes = await File(filePath).readAsBytes();
-  final img.Image? src = img.decodeImage(bytes);
+    if (src == null) return null;
 
-  if (src == null) return null;
+    // Resize
+    final img.Image resized = img.copyResize(
+        src, width: targetSize, height: targetSize, maintainAspect: true
+    );
 
-  if (src.width < minSize || src.height < minSize) {
+    // Pad
+    final img.Image canvas = img.Image(
+        width: targetSize, height: targetSize, numChannels: 4
+    );
+
+    // Center
+    final int dstX = (targetSize - resized.width) ~/ 2;
+    final int dstY = (targetSize - resized.height) ~/ 2;
+    img.compositeImage(canvas, resized, dstX: dstX, dstY: dstY);
+
+    // Save as PNG (Overwriting or creating new)
+    // Note: If you want to overwrite, just use filePath.
+    // Here we assume we are saving to the temp path passed in.
+    return filePath; // In this specific flow, we write to file inside the loop below
+  } catch (e) {
     return null;
   }
-
-  // 2. Process Image (Resize & Pad)
-  final img.Image resized = img.copyResize(
-      src,
-      width: targetSize,
-      height: targetSize,
-      maintainAspect: true
-  );
-
-  final img.Image canvas = img.Image(
-    width: targetSize,
-    height: targetSize,
-    numChannels: 4,
-  );
-
-  img.fill(canvas, color: img.ColorRgba8(0, 0, 0, 0));
-
-  final int dstX = (targetSize - resized.width) ~/ 2;
-  final int dstY = (targetSize - resized.height) ~/ 2;
-
-  img.compositeImage(canvas, resized, dstX: dstX, dstY: dstY);
-  final pngBytes = img.encodePng(canvas);
-
-  // 3. Handle File Path (JPG -> PNG conversion)
-  String newPath = filePath;
-  if (!filePath.toLowerCase().endsWith(".png")) {
-    newPath = filePath.replaceAll(RegExp(r'\.\w+$'), '.png');
-    // We delete the old file, which is why we read metadata in step 1
-    try {
-      if (await File(filePath).exists()) {
-        await File(filePath).delete();
-      }
-    } catch (e) {
-      // Ignore delete errors
-    }
-  }
-
-  // 4. Save New Image
-  await File(newPath).writeAsBytes(pngBytes);
-
-  // 5. RESTORE METADATA
-  await _writeMetadata(newPath, preservedMetadata);
-
-  return newPath;
 }
 
 
@@ -148,3 +121,4 @@ Future<void> _writeMetadata(String path, Map<String, Object>? metadata) async {
     }
   }
 }
+

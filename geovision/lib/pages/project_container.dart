@@ -8,7 +8,7 @@ import 'package:native_exif/native_exif.dart';
 import 'package:geovision/pages/project_tabs/camera.dart';
 import 'package:geovision/pages/project_tabs/images.dart';
 import 'package:geovision/pages/project_tabs/map.dart';
-import '../functions/export_service.dart';
+import '../functions/data_service/export_service.dart';
 import '../functions/metadata_handle.dart';
 import 'manage_labels_page.dart';
 import 'annotation_page.dart';

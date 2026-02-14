@@ -7,7 +7,7 @@ import 'package:permission_handler/permission_handler.dart';
 // COMPONENT IMPORTS
 import '../components/project_card.dart';
 import '../components/project_list.dart';
-import '../functions/import_service.dart';
+import '../functions/data_service/import_service.dart';
 import 'home_add.dart';
 import 'home_tabs/about.dart';
 import 'home_tabs/help.dart';
@@ -38,6 +38,7 @@ class _HomePageState extends State<HomePage> {
     await [
       Permission.camera,
       Permission.location,
+      Permission.storage,
     ].request();
 
   }
@@ -125,8 +126,6 @@ class _HomePageState extends State<HomePage> {
     return type == 'segmentation' ? Icons.brush : Icons.grid_view;
   }
 
-
-  // 2. ADDED: Helper widget for filter buttons
   Widget _buildFilterBtn(IconData icon, String value, String tooltip) {
     bool isSelected = _projectFilter == value;
     return GestureDetector(
@@ -234,7 +233,7 @@ class _HomePageState extends State<HomePage> {
     final List<Map<String, dynamic>> alphaSortedData = List.from(_foldersData);
     alphaSortedData.sort((a, b) => a['title'].toString().toLowerCase().compareTo(b['title'].toString().toLowerCase()));
 
-    // 3. UPDATED: Filtering logic now includes _projectFilter
+    // Filtering logic
     final List<Map<String, dynamic>> filteredData = alphaSortedData.where((item) {
       final matchesSearch = item['title'].toString().toLowerCase().contains(_searchQuery.toLowerCase());
       final matchesType = _projectFilter == 'all' || item['type'] == _projectFilter;

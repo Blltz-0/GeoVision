@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:path_provider/path_provider.dart';
 import '../../components/class_selector_dropdown.dart';
-import '../../functions/camera/image_processor.dart';
+import '../../functions/image_processor.dart';
 import '../../functions/metadata_handle.dart';
 
 class CameraPage extends StatefulWidget {
@@ -112,7 +112,9 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
         _maxAvailableZoom = await newController.getMaxZoomLevel();
         await newController.setZoomLevel(_minAvailableZoom);
         await newController.setFlashMode(_currentFlashMode);
-        if (mounted) setState(() {});
+        if (mounted) {
+          setState(() {});
+        }
       });
       if (mounted) setState(() {});
     } catch (e) { debugPrint("Camera Setup Error: $e"); }
@@ -155,6 +157,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
 
   Future<void> _takePicture() async {
     if (!widget.isActive || _controller == null || !_controller!.value.isInitialized || _isCapturing) return;
+
     setState(() => _isCapturing = true);
     final String tagForThisPhoto = widget.projectType == 'segmentation' ? "" : _activeTag;
     try {
@@ -162,7 +165,7 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
       final XFile rawImage = await _controller!.takePicture();
       if (mounted) setState(() => _isCapturing = false);
       _backgroundPipeline(rawImage, tagForThisPhoto, Future.value(locationToSave));
-    } catch (e) { if (mounted) setState(() => _isCapturing = false); }
+    } catch (e) { if (mounted) setState(() => _isCapturing = false);}
   }
 
   Future<void> _backgroundPipeline(XFile rawImage, String className, Future<Position?> locationFuture) async {

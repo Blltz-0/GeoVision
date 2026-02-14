@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
 import 'package:native_exif/native_exif.dart';
 import 'package:path_provider/path_provider.dart';
@@ -11,7 +13,6 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:geovision/components/class_selector_dropdown.dart';
 import '../../components/class_creator.dart';
 import '../../components/image_grid.dart';
-import '../../functions/camera/image_processor.dart';
 import '../../functions/metadata_handle.dart';
 
 class ImagesPage extends StatefulWidget {
@@ -409,195 +410,196 @@ class _ImagesPageState extends State<ImagesPage> {
     }
   }
 
-  Future<void> _processBatchBackground(
-      List<XFile> files, String targetClass, Map<String, dynamic> history) async {
+  Future<Map<String, Object>?> _readMetadata(String path) async {
     try {
-      List<String> skippedFiles = [];
-      final appDir = await getApplicationDocumentsDirectory();
-      final projectDir = Directory('${appDir.path}/projects/${widget.projectName}/images');
-      if (!await projectDir.exists()) await projectDir.create(recursive: true);
+      final exif = await Exif.fromPath(path);
+      final latLong = await exif.getLatLong();
+      final originalDate = await exif.getAttribute('DateTimeOriginal');
+      final digitizedDate = await exif.getAttribute('DateTimeDigitized');
+      await exif.close();
 
-      // Get snapshot of disk + memory tracker
-      final entities = await projectDir.list().toList();
-      final Set<String> sessionNames = entities
-          .whereType<File>()
-          .map((e) => e.path.split(Platform.pathSeparator).last)
-          .toSet();
-
-      for (int i = 0; i < files.length; i++) {
-        final file = files[i];
-        int originalSize = await file.length();
-
-        // Reserve Name
-        String nextName = await MetadataService.generateNextFileName(
-          projectDir,
-          widget.projectName,
-          targetClass,
-          projectType: widget.projectType,
-          existingNames: sessionNames,
-        );
-        sessionNames.add(nextName);
-
-        try {
-          String? newPath = await _processSingleImport(
-              file,
-              targetClass,
-              forcedFileName: nextName
-          );
-
-          if (newPath == null) {
-            skippedFiles.add(file.name);
-            sessionNames.remove(nextName);
-            continue;
-          }
-
-          history[nextName] = {
-            'originalName': file.name,
-            'size': originalSize
-          };
-
-          if (mounted) {
-            setState(() {
-              _currentUploadCount++;
-              // We keep these in temp list to show them immediately
-              _tempUploadedImages.add(File(newPath));
-              widget.labelMap[nextName] = targetClass;
-            });
-          }
-        } catch (e) {
-          debugPrint("Upload error: $e");
-        }
+      Map<String, Object> data = {};
+      if (latLong != null) {
+        data['lat'] = latLong.latitude;
+        data['lng'] = latLong.longitude;
       }
+      if (originalDate != null) data['DateTimeOriginal'] = originalDate;
+      if (digitizedDate != null) data['DateTimeDigitized'] = digitizedDate;
 
-      // 1. Save history to disk
-      await _saveUploadHistory(history);
-
-      if (mounted) {
-        // 2. Hide loading state
-        setState(() {
-          _isUploading = false;
-        });
-
-        // 3. Trigger the parent refresh
-        // This usually triggers the 'FutureBuilder' or 'init' logic in your main screen
-        widget.onDataChanged?.call();
-
-        // 4. Clear the temporary list after a short delay
-        // This prevents the images from flickering out and back in
-        // while the parent is reloading the actual file list
-        Future.delayed(const Duration(milliseconds: 300), () {
-          if (mounted) {
-            setState(() {
-              _tempUploadedImages.clear();
-            });
-          }
-        });
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("Imported $_currentUploadCount images. Page refreshed.")),
-        );
-
-        if (skippedFiles.isNotEmpty) {
-          _showSkippedFilesDialog(skippedFiles);
-        }
-      }
+      return data.isNotEmpty ? data : null;
     } catch (e) {
-      if (mounted) setState(() => _isUploading = false);
+      return null; // Fail silently for metadata
     }
   }
 
-  Future<String?> _processSingleImport(
-      XFile file,
-      String targetClass,
-      {required String forcedFileName}
-      ) async {
+  Future<void> _writeMetadata(String path, Map<String, Object>? metadata) async {
+    if (metadata == null) return;
+    try {
+      final exif = await Exif.fromPath(path);
+      Map<String, Object> attributes = {};
+
+      if (metadata.containsKey('lat') && metadata.containsKey('lng')) {
+        double lat = metadata['lat'] as double;
+        double lng = metadata['lng'] as double;
+        attributes['GPSLatitude'] = lat.abs();
+        attributes['GPSLatitudeRef'] = lat >= 0 ? 'N' : 'S';
+        attributes['GPSLongitude'] = lng.abs();
+        attributes['GPSLongitudeRef'] = lng >= 0 ? 'E' : 'W';
+      }
+      if (metadata.containsKey('DateTimeOriginal')) {
+        attributes['DateTimeOriginal'] = metadata['DateTimeOriginal']!;
+      }
+      await exif.writeAttributes(attributes);
+      await exif.close();
+    } catch (e) {
+      debugPrint("Error restoring metadata: $e");
+    }
+  }
+
+  Future<void> processImageWithMetadata(String inputPath, String outputPath) async {
+    // --- STEP 1: READ METADATA (Main Thread) ---
+    // We do this BEFORE the image is modified/overwritten
+    Map<String, Object>? preservedMetadata = await _readMetadata(inputPath);
+
+    // --- STEP 2: HEAVY PROCESSING (Background Thread) ---
+    final request = ImageWorkerRequest(
+        inputPath,
+        outputPath,
+        640, // Target Size
+        0    // Min Size
+    );
+
+    // This 'await' pauses execution here, but allows the UI to keep rendering
+    final bool success = await compute(backgroundSquarePad, request);
+
+    // --- STEP 3: RESTORE METADATA (Main Thread) ---
+    if (success && preservedMetadata != null) {
+      await _writeMetadata(outputPath, preservedMetadata);
+    }
+  }
+
+  // --- OPTIMIZED BATCH PROCESSOR ---
+
+  Future<void> _processBatchBackground(
+      List<XFile> files, String targetClass, Map<String, dynamic> history) async {
+
+    List<Map<String, dynamic>> recordsToSave = [];
     final appDir = await getApplicationDocumentsDirectory();
     final projectDir = Directory('${appDir.path}/projects/${widget.projectName}/images');
-    final String newPath = '${projectDir.path}/$forcedFileName';
+    if (!await projectDir.exists()) await projectDir.create(recursive: true);
 
-    try {
-      // 1. EXTRACT METADATA FROM SOURCE (Before processing)
-      Position? importedPosition;
-      DateTime extractedTime = DateTime.now(); // Default to now
-      bool timeFound = false;
+    int globalCounter = await MetadataService.getLatestIndex(
+        projectDir, widget.projectName, targetClass, projectType: widget.projectType
+    );
+
+    String cleanProject = widget.projectName.replaceAll(RegExp(r'[^\w\s]+'), '').replaceAll(' ', '_');
+    String cleanClass = targetClass.replaceAll(RegExp(r'[^\w\s]+'), '').replaceAll(' ', '_');
+    if (cleanClass.isEmpty && widget.projectType == 'classification') cleanClass = "Unclassified";
+
+    // 1. PROCESS IMAGES LOOP
+    for (int i = 0; i < files.length; i++) {
+      // STOP if the user left the screen (prevents crashes)
+      if (!mounted) break;
+
+      globalCounter++;
+
+      String nextName = widget.projectType == 'segmentation'
+          ? "${cleanProject}_$globalCounter.png"
+          : "${cleanProject}_${cleanClass}_$globalCounter.png";
+
+      String finalPath = '${projectDir.path}/$nextName';
 
       try {
-        // A. Try getting EXIF Data
-        final exif = await Exif.fromPath(file.path);
-        final latLong = await exif.getLatLong();
+        // A. Read Metadata (Main Thread)
+        Map<String, Object>? metadata = await _readMetadata(files[i].path);
 
-        // B. Get Date from EXIF (using the helper we made, or manually here)
-        final dateString = await exif.getAttribute('DateTimeOriginal');
-        await exif.close();
+        // B. Heavy Processing (Background Thread)
+        final request = ImageWorkerRequest(
+            files[i].path,
+            finalPath,
+            640, // Target Size
+            0    // Min Size
+        );
 
-        // Handle Coordinates
-        if (latLong != null) {
-          importedPosition = Position(
-              latitude: latLong.latitude,
-              longitude: latLong.longitude,
-              timestamp: DateTime.now(), // Placeholder, we use extractedTime variable below
-              accuracy: 0, altitude: 0, heading: 0, speed: 0,
-              speedAccuracy: 0, altitudeAccuracy: 0, headingAccuracy: 0
-          );
-        }
+        // Run in isolate
+        final bool success = await compute(backgroundSquarePad, request);
 
-        // Handle Time
-        if (dateString != null) {
-          try {
-            // Fix format 2023:10:01 12:00:00 -> 2023-10-01 12:00:00
-            String fmt = dateString.replaceFirst(':', '-').replaceFirst(':', '-');
-            extractedTime = DateTime.parse(fmt);
-            timeFound = true;
-          } catch (e) {
-            debugPrint("Date parse error: $e");
+        if (success) {
+          // C. Restore Metadata (Main Thread)
+          if (metadata != null) await _writeMetadata(finalPath, metadata);
+
+          recordsToSave.add({
+            'path': finalPath,
+            'lat': metadata?['lat'],
+            'lng': metadata?['lng'],
+            'time': metadata?['DateTimeOriginal'],
+          });
+
+          // D. Add to local lists (But DON'T setState yet)
+          history[nextName] = {'originalName': files[i].name, 'size': await files[i].length()};
+
+          // Add to temp list directly
+          _tempUploadedImages.add(File(finalPath));
+          widget.labelMap[nextName] = targetClass;
+          _currentUploadCount++;
+
+          // --- CRITICAL FIX: BATCH UI UPDATES ---
+          // Only update the UI every 5 images (or if it's the last one).
+          // This prevents flooding the GPU with "redraw" commands.
+          if (i % 5 == 0 || i == files.length - 1) {
+            if (mounted) {
+              setState(() {});
+            }
+            // --- CRITICAL FIX: YIELD TO GC ---
+            // Pause for 50ms to let the Memory Garbage Collector run
+            // and the GPU catch up with texture uploads.
+            await Future.delayed(const Duration(milliseconds: 50));
           }
         }
       } catch (e) {
-        debugPrint("Metadata extraction error: $e");
+        debugPrint("Error processing $nextName: $e");
+      }
+    }
+
+    // 2. SAVE TO CSV (Batch)
+    for (var record in recordsToSave) {
+      Position? pos;
+      if (record['lat'] != null && record['lng'] != null) {
+        pos = Position(
+          latitude: record['lat'] as double,
+          longitude: record['lng'] as double,
+          timestamp: DateTime.now(),
+          accuracy: 0, altitude: 0, heading: 0, speed: 0, speedAccuracy: 0,
+          altitudeAccuracy: 0, headingAccuracy: 0,
+        );
       }
 
-      // C. Fallback: If EXIF date missing, use File Modified Date
-      if (!timeFound) {
+      DateTime? photoTime;
+      if (record['time'] != null) {
         try {
-          extractedTime = await File(file.path).lastModified();
-        } catch (e) {
-          debugPrint("Could not get file modified time");
-        }
+          String t = record['time'].toString().replaceAll(':', '-');
+          photoTime = DateTime.parse("${t.substring(0, 10)} ${t.substring(11)}");
+        } catch (_) {}
       }
 
-      // 2. Copy and Process Image
-      // Note: image processing (padToSquare) usually strips metadata!
-      await File(file.path).copy(newPath);
-      String? processedPath = await padToSquare(newPath);
-      if (processedPath == null) return null;
-
-      await FileImage(File(processedPath)).evict();
-
-      // 3. RE-EMBED METADATA (Crucial step)
-      // We explicitly write the old time and location onto the new processed file
-      await MetadataService.embedMetadata(
-        filePath: processedPath,
-        lat: importedPosition?.latitude ?? 0.0,
-        lng: importedPosition?.longitude ?? 0.0,
-        className: targetClass,
-        time: extractedTime, // Use the extracted time!
-      );
-
-      // 4. SAVE TO DATABASE
-      // We modify saveToCsv to accept the time override
       await MetadataService.saveToCsv(
         projectName: widget.projectName,
-        imagePath: processedPath,
-        position: importedPosition,
+        imagePath: record['path'],
+        position: pos,
         className: targetClass,
         projectType: widget.projectType,
-        customTime: extractedTime,
+        customTime: photoTime,
       );
+    }
 
-      return processedPath;
-    } catch (e) {
-      debugPrint("Failed processing $forcedFileName: $e");
-      return null;
+    await _saveUploadHistory(history);
+
+    if (mounted) {
+      setState(() { _isUploading = false; });
+      widget.onDataChanged?.call();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("Imported $_currentUploadCount images.")),
+      );
     }
   }
 
@@ -1124,5 +1126,54 @@ class _ImagesPageState extends State<ImagesPage> {
         ),
       )
     );
+  }
+}
+
+class ImageWorkerRequest {
+  final String inputPath;
+  final String outputPath;
+  final int targetSize;
+  final int minSize;
+
+  ImageWorkerRequest(this.inputPath, this.outputPath, this.targetSize, this.minSize);
+}
+
+Future<bool> backgroundSquarePad(ImageWorkerRequest request) async {
+  try {
+    final file = File(request.inputPath);
+    final bytes = await file.readAsBytes();
+
+    // 1. Decode
+    final img.Image? src = img.decodeImage(bytes);
+    if (src == null) return false;
+
+    // 2. Resize (Fit within target box)
+    final img.Image resized = img.copyResize(
+        src,
+        width: request.targetSize,
+        height: request.targetSize,
+        maintainAspect: true
+    );
+
+    // 3. Create Square Canvas (Transparent)
+    final img.Image canvas = img.Image(
+        width: request.targetSize,
+        height: request.targetSize,
+        numChannels: 4 // RGBA
+    );
+
+    // 4. Center the image
+    final int dstX = (request.targetSize - resized.width) ~/ 2;
+    final int dstY = (request.targetSize - resized.height) ~/ 2;
+    img.compositeImage(canvas, resized, dstX: dstX, dstY: dstY);
+
+    // 5. Encode & Write to Disk
+    // We write to outputPath (which might be the same as inputPath if overwriting)
+    await File(request.outputPath).writeAsBytes(img.encodePng(canvas));
+
+    return true;
+  } catch (e) {
+    debugPrint("Background Worker Error: $e");
+    return false;
   }
 }

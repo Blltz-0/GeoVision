@@ -1034,10 +1034,12 @@ class _AnnotationPageState extends State<AnnotationPage> {
                                               child: DropdownButtonHideUnderline(
                                                 child: DropdownButton<String>(
                                                   isDense: true,
+                                                  isExpanded: true, // FIX 1: Forces dropdown to use available width
                                                   dropdownColor: const Color(0xFF333333),
                                                   hint: const Text("Select Label", style: TextStyle(color: Colors.grey, fontSize: 11)),
                                                   value: layer.labelName,
                                                   icon: const Icon(Icons.arrow_drop_down, color: Colors.grey, size: 18),
+                                                  // FIX 2: Update the items builder
                                                   items: availableLabels.map((labelMap) {
                                                     return DropdownMenuItem<String>(
                                                       value: labelMap['name'],
@@ -1045,7 +1047,15 @@ class _AnnotationPageState extends State<AnnotationPage> {
                                                         children: [
                                                           Icon(Icons.circle, color: Color(labelMap['color']), size: 10),
                                                           const SizedBox(width: 6),
-                                                          Text(labelMap['name'], style: const TextStyle(color: Colors.white, fontSize: 12)),
+                                                          // FIX 3: Wrap text in Expanded to handle overflow
+                                                          Expanded(
+                                                            child: Text(
+                                                              labelMap['name'],
+                                                              style: const TextStyle(color: Colors.white, fontSize: 12),
+                                                              overflow: TextOverflow.ellipsis,
+                                                              maxLines: 1,
+                                                            ),
+                                                          ),
                                                         ],
                                                       ),
                                                     );

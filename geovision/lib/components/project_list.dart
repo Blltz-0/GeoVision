@@ -91,6 +91,7 @@ class _ProjectListItem extends StatelessWidget {
 
     return GestureDetector(
       onTap: () async {
+
         await Navigator.push(context, MaterialPageRoute(
           builder: (context) => ProjectContainerPage(projectName: title),
         ));
