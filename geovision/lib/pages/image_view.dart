@@ -1,15 +1,14 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'dart:convert';
 import 'package:path_provider/path_provider.dart';
 
-import '../components/class_creator.dart';
-import '../components/edit_metadata_dialog.dart';
-import '../components/location_decoder.dart';
-import '../functions/metadata_handle.dart';
-import '../components/ellipsis_menu.dart';
+import '../components/classes/class_creator.dart';
+import '../components/image_view/edit_metadata_dialog.dart';
+import '../components/image_view/location_decoder.dart';
+import '../functions/data_service/metadata_handle.dart';
+import '../components/image_view/ellipsis_menu.dart';
 
 class ImageView extends StatefulWidget {
   final List<String> allImagePaths;

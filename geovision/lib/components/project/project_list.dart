@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../pages/project_container.dart';
-import '../functions/metadata_handle.dart';
+import '../../pages/project_container.dart';
+import '../../functions/data_service/metadata_handle.dart';
 
 class ProjectList extends StatelessWidget {
   final List<Map<String, dynamic>> dataList;

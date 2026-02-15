@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
-import '../functions/metadata_handle.dart';
+import '../../functions/data_service/metadata_handle.dart';
 
 class CreateLabelPage extends StatefulWidget {
   final String projectName;

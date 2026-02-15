@@ -5,9 +5,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:path_provider/path_provider.dart';
-import '../../components/class_selector_dropdown.dart';
-import '../../functions/image_processor.dart';
-import '../../functions/metadata_handle.dart';
+import '../../components/classes/class_selector_dropdown.dart';
+import '../../functions/image/image_processor.dart';
+import '../../functions/data_service/metadata_handle.dart';
 
 class CameraPage extends StatefulWidget {
   final String projectName;

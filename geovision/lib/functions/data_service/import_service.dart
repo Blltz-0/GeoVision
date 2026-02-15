@@ -1,117 +1,165 @@
 import 'dart:io';
 import 'dart:convert';
 import 'dart:math';
-import 'package:archive/archive.dart';
+import 'package:archive/archive_io.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart'; // Required for compute
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
-import '../metadata_handle.dart';
+import 'metadata_handle.dart';
 
 class ImportService {
-  static Future<bool> importProject(BuildContext context) async {
+  static Future<bool> executeImport(BuildContext context, FilePickerResult result) async {
+    final String zipPath = result.files.single.path!;
+    final String baseProjectName = result.files.single.name
+        .replaceAll('.zip', '')
+        .replaceAll('_COCO_Export', '');
+
+    final appDir = await getApplicationDocumentsDirectory();
+    final String projectsRoot = '${appDir.path}/projects';
+
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['zip'],
-      );
+      // Run the heavy work in the background
+      final bool success = await compute(_backgroundImportTask, {
+        'zipPath': zipPath,
+        'projectsRoot': projectsRoot,
+        'baseProjectName': baseProjectName,
+      });
 
-      if (result == null || result.files.single.path == null) return false;
-
-
-      File zipFile = File(result.files.single.path!);
-      String rawName = result.files.single.name.replaceAll('.zip', '');
-      String projectName = rawName.replaceAll('_COCO_Export', '');
-
-      final appDir = await getApplicationDocumentsDirectory();
-      String finalPath = '${appDir.path}/projects/$projectName';
-
-      if (await Directory(finalPath).exists()) {
-        projectName = "${projectName}_${DateTime.now().millisecondsSinceEpoch}";
-        finalPath = '${appDir.path}/projects/$projectName';
+      if (success) {
+        // After isolate finishes, rebuild the metadata index on the main thread
+        // because MetadataService likely needs database/path access
+        await MetadataService.rebuildProjectData(baseProjectName);
       }
 
-      final projectDir = await Directory(finalPath).create(recursive: true);
-      final bytes = await zipFile.readAsBytes();
-      final archive = ZipDecoder().decodeBytes(bytes);
-
-      for (final file in archive) {
-        if (file.isFile) {
-          final data = file.content as List<int>;
-          File outFile = File('${projectDir.path}/${file.name}');
-          await outFile.create(recursive: true);
-          await outFile.writeAsBytes(data);
-        }
-      }
-
-      // --- 1. RECONSTRUCT CLASSES ---
-      await _rebuildClasses(projectName, projectDir);
-
-      // --- 2. RECONSTRUCT GEOJSON ---
-      // We detect type based on folder contents or filename structure
-      String projectType = 'classification';
-      final annotationDir = Directory('${projectDir.path}/annotation');
-      if (await annotationDir.exists()) {
-        projectType = 'segmentation';
-      }
-
-      await MetadataService.rebuildProjectData(projectName, projectType: projectType);
-
-
-      return true;
+      return success;
     } catch (e) {
-      debugPrint("❌ IMPORT ERROR: $e");
+      debugPrint("❌ ISOLATE IMPORT ERROR: $e");
       return false;
     }
   }
+}
 
-  static Future<void> _rebuildClasses(String projectName, Directory projectDir) async {
-    Set<String> classNames = {};
+Future<bool> _backgroundImportTask(Map<String, String> params) async {
+  final String zipPath = params['zipPath']!;
+  final String projectsRoot = params['projectsRoot']!;
+  final String baseProjectName = params['baseProjectName']!;
 
-    // Check for COCO file (Exported version uses _annotations.coco.json)
-    final cocoFile = File('${projectDir.path}/_annotations.coco.json');
-    if (await cocoFile.exists()) {
-      try {
-        final content = jsonDecode(await cocoFile.readAsString());
-        final categories = content['categories'] as List;
-        for (var cat in categories) {
-          String name = cat['name'].toString();
-          if (name.toLowerCase() != 'unclassified') classNames.add(name);
-        }
-      } catch (_) {}
+  String projectName = baseProjectName;
+  String finalPath = '$projectsRoot/$projectName';
+
+  try {
+    final projectDir = Directory(finalPath);
+    if (projectDir.existsSync()) {
+      projectName = "${projectName}_${DateTime.now().millisecondsSinceEpoch}";
+      finalPath = '$projectsRoot/$projectName';
     }
 
-    // Supplemental scan of image filenames
-    final imagesDir = Directory('${projectDir.path}/images');
-    if (await imagesDir.exists()) {
-      final entities = imagesDir.listSync();
-      for (var entity in entities) {
-        final filename = entity.path.split(Platform.pathSeparator).last;
-        final parts = filename.split('_');
-        if (parts.length >= 3) { // Expecting Project_Class_Counter.jpg
-          String candidate = parts[1];
-          if (candidate.toLowerCase() != "unclassified") classNames.add(candidate);
+    final dir = await Directory(finalPath).create(recursive: true);
+
+    // 1. EXTRACT ZIP
+    final inputStream = InputFileStream(zipPath);
+    final archive = ZipDecoder().decodeStream(inputStream);
+
+    for (final file in archive) {
+      if (file.isFile) {
+        final outFile = File('${dir.path}/${file.name}');
+        outFile.createSync(recursive: true);
+        final outputStream = OutputFileStream(outFile.path);
+        file.writeContent(outputStream);
+        outputStream.closeSync();
+      }
+    }
+    inputStream.closeSync();
+
+    // 2. DETECT TYPE
+    String projectType = 'classification';
+    final readmeFile = File('${dir.path}/README.txt');
+    if (readmeFile.existsSync()) {
+      final content = readmeFile.readAsStringSync();
+      if (content.contains("Type: Image Segmentation")) projectType = 'segmentation';
+    }
+    File('${dir.path}/project_type.txt').writeAsStringSync(projectType);
+
+    // 3. RECONSTRUCT ANNOTATIONS
+    final cocoFile = File('${dir.path}/_annotations.coco.json');
+    if (cocoFile.existsSync()) {
+      final Map<String, dynamic> cocoData = jsonDecode(cocoFile.readAsStringSync());
+      final categories = cocoData['categories'] ?? [];
+      final String metaFileName = (projectType == 'segmentation') ? 'labels.json' : 'classes.json';
+
+      Map<int, String> categoryNames = {for (var c in categories) c['id']: c['name'].toString()};
+
+      List mapped = categories.where((c) => c['name'].toString().toLowerCase() != 'unclassified').map((c) => {
+        'name': c['name'],
+        'color': _getColorForName(c['name'].toString()),
+      }).toList();
+
+      File('${dir.path}/$metaFileName').writeAsStringSync(jsonEncode(mapped));
+
+      if (projectType == 'segmentation') {
+        final annDir = Directory('${dir.path}/annotation')..createSync();
+        final images = cocoData['images'] ?? [];
+        final annotations = cocoData['annotations'] ?? [];
+
+        for (var image in images) {
+          final String fileName = image['file_name'].toString();
+          final String baseName = fileName.contains('.') ? fileName.split('.').first : fileName;
+          final imageAnns = annotations.where((a) => a['image_id'] == image['id']).toList();
+
+          if (imageAnns.isEmpty) continue;
+
+          List reconstructed = [];
+          for (int j = 0; j < imageAnns.length; j++) {
+            final ann = imageAnns[j];
+            final labelName = categoryNames[ann['category_id']] ?? "Unclassified";
+            final colorInt = _getColorForName(labelName);
+
+            List seg = (ann['segmentation'] is List && ann['segmentation'].isNotEmpty) ? ann['segmentation'][0] : [];
+            List points = [];
+            for (int k = 0; k < seg.length; k += 2) {
+              points.add([(seg[k] as num).toDouble(), (seg[k + 1] as num).toDouble()]);
+            }
+
+            // --- OPTION 1: CLOSING THE LOOP ---
+            if (points.isNotEmpty && (points.first[0] != points.last[0] || points.first[1] != points.last[1])) {
+              points.add([points.first[0], points.first[1]]);
+            }
+
+            if (points.isNotEmpty) {
+              reconstructed.add({
+                "id": "${DateTime.now().toIso8601String()}_$j",
+                "name": "Layer ${j + 1}",
+                "labelName": labelName,
+                "labelColor": colorInt,
+                "isVisible": true,
+                "isLocked": false,
+                "strokes": [
+                  {
+                    "p": points,
+                    "c": colorInt,
+                    "w": 3.0,
+                    "e": false,
+                    "f": true
+                  }
+                ]
+              });
+            }
+          }
+
+          if (reconstructed.isNotEmpty) {
+            File('${annDir.path}/${baseName}_data.json').writeAsStringSync(jsonEncode(reconstructed));
+          }
         }
       }
     }
-
-    if (classNames.isNotEmpty) {
-      List<Map<String, dynamic>> classList = classNames.map((name) => {
-        'name': name,
-        'color': _generateRandomColor().value,
-      }).toList();
-
-      final classFile = File('${projectDir.path}/classes.json');
-      await classFile.writeAsString(jsonEncode(classList));
-    }
+    return true;
+  } catch (e) {
+    return false;
   }
+}
 
-  static Color _generateRandomColor() {
-    final Random random = Random();
-    return Color.fromARGB(
-        255,
-        random.nextInt(156) + 50,
-        random.nextInt(156) + 50,
-        random.nextInt(156) + 50
-    );
-  }
+int _getColorForName(String name) {
+  final Random random = Random(name.hashCode);
+  return Color.fromARGB(255, random.nextInt(150) + 100, random.nextInt(150) + 100, random.nextInt(150) + 100).value;
 }

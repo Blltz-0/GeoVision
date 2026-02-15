@@ -1,19 +1,18 @@
-import 'dart:convert';
 import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
-import 'package:image/image.dart' as img;
 import 'package:image_picker/image_picker.dart';
-import 'package:native_exif/native_exif.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-import 'package:geovision/components/class_selector_dropdown.dart';
-import '../../components/class_creator.dart';
-import '../../components/image_grid.dart';
-import '../../functions/metadata_handle.dart';
+import 'package:geovision/components/classes/class_selector_dropdown.dart';
+import '../../components/classes/class_picker.dart';
+import '../../components/image/image_grid.dart';
+import '../../functions/data_service/metadata_handle.dart';
+import '../../functions/image/image_metadata.dart';
+import '../../functions/image/image_resizer.dart';
 
 class ImagesPage extends StatefulWidget {
   final String projectName;
@@ -59,7 +58,6 @@ class _ImagesPageState extends State<ImagesPage> {
   final List<File> _tempUploadedImages = [];
 
   // --- SELECTION LOGIC ---
-
   void _toggleSelection(String path) {
     setState(() {
       if (_selectedPaths.contains(path)) {
@@ -88,7 +86,6 @@ class _ImagesPageState extends State<ImagesPage> {
   }
 
   // --- BULK ACTIONS ---
-
   Future<void> _deleteSelectedImages() async {
     final count = _selectedPaths.length;
     final bool? confirm = await showDialog<bool>(
@@ -113,13 +110,11 @@ class _ImagesPageState extends State<ImagesPage> {
 
     for (String path in pathsToDelete) {
       try {
-        // This service call handles the GeoJSON removal internally
         await MetadataService.deleteImage(
           projectName: widget.projectName,
           imagePath: path,
           projectType: widget.projectType,
         );
-
         final filename = path.split(Platform.pathSeparator).last;
         widget.labelMap.remove(filename);
       } catch (e) {
@@ -132,20 +127,19 @@ class _ImagesPageState extends State<ImagesPage> {
     widget.onDataChanged?.call();
   }
 
-  // --- BULK ACTIONS ---
-
   Future<void> _tagSelectedImages() async {
-    // 1. Get user input first
-    String? targetClass = await _handleClassSelectionFlow();
+    // Replaced complex inline method with the new Helper Class
+    String? targetClass = await ClassPickerDialog.show(
+      context: context,
+      projectName: widget.projectName,
+      onClassesUpdated: widget.onClassesUpdated,
+    );
+
     if (targetClass == null) return;
 
-    // 2. Capture the list of files to process
     List<String> pathsToProcess = _selectedPaths.toList();
-
-    // 3. Clear selection immediately so the user can keep working
     _clearSelection();
 
-    // 4. Notify user that work has started
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -154,8 +148,6 @@ class _ImagesPageState extends State<ImagesPage> {
         ),
       );
     }
-
-    // 5. Start the heavy lifting in a separate async method (fire-and-forget)
     _processTaggingBackground(pathsToProcess, targetClass);
   }
 
@@ -203,283 +195,7 @@ class _ImagesPageState extends State<ImagesPage> {
     }
   }
 
-  // --- HISTORY MANAGEMENT ---
-
-  Future<File> _getHistoryFile() async {
-    final appDir = await getApplicationDocumentsDirectory();
-    final historyFile = File('${appDir.path}/projects/${widget.projectName}/upload_history.json');
-    if (!await historyFile.exists()) {
-      await historyFile.create(recursive: true);
-      await historyFile.writeAsString(jsonEncode({}));
-    }
-    return historyFile;
-  }
-
-  Future<Map<String, dynamic>> _loadUploadHistory() async {
-    try {
-      final file = await _getHistoryFile();
-      final String content = await file.readAsString();
-      final dynamic decoded = jsonDecode(content);
-
-      if (decoded is List) return {};
-
-      // Backward compatibility logic
-      Map<String, dynamic> result = {};
-      decoded.forEach((key, value) {
-        if (value is String) {
-          result[key] = {'originalName': value, 'size': -1};
-        } else {
-          result[key] = value;
-        }
-      });
-      return result;
-    } catch (e) {
-      return {};
-    }
-  }
-
-  Future<void> _saveUploadHistory(Map<String, dynamic> history) async {
-    try {
-      final file = await _getHistoryFile();
-      await file.writeAsString(jsonEncode(history));
-    } catch (e) {
-      debugPrint("Error saving history: $e");
-    }
-  }
-
-  // --- DROPDOWN ---
-  Future<String?> _handleClassSelectionFlow() async {
-    String currentSelection = "Unclassified";
-    final LayerLink layerLink = LayerLink();
-
-    while (true) {
-      List<dynamic> classes = await MetadataService.getClasses(widget.projectName);
-      if (!classes.any((c) => c['name'] == "Unclassified")) {
-        classes.insert(0, {'name': 'Unclassified', 'color': Colors.grey.toARGB32()});
-      }
-      if (!mounted) return null;
-
-      final String? result = await showDialog<String>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) {
-          OverlayEntry? dropdownOverlay;
-          bool isDropdownOpen = false;
-
-          void closeDropdown() {
-            dropdownOverlay?.remove();
-            dropdownOverlay = null;
-            isDropdownOpen = false;
-          }
-
-          return StatefulBuilder(
-            builder: (context, setStateDialog) {
-              void toggleDropdown() {
-                if (isDropdownOpen) {
-                  closeDropdown();
-                  setStateDialog(() {});
-                  return;
-                }
-                dropdownOverlay = OverlayEntry(
-                  builder: (context) {
-                    return Stack(
-                      children: [
-                        Positioned.fill(
-                          child: GestureDetector(
-                            onTap: () {
-                              closeDropdown();
-                              setStateDialog(() {});
-                            },
-                            behavior: HitTestBehavior.translucent,
-                            child: Container(color: Colors.transparent),
-                          ),
-                        ),
-                        Positioned(
-                          width: 200,
-                          child: CompositedTransformFollower(
-                            link: layerLink,
-                            showWhenUnlinked: false,
-                            offset: const Offset(0, 50),
-                            child: Material(
-                              elevation: 4,
-                              borderRadius: BorderRadius.circular(8),
-                              color: Colors.white,
-                              child: Container(
-                                constraints: const BoxConstraints(maxHeight: 250),
-                                decoration: BoxDecoration(
-                                  borderRadius: BorderRadius.circular(8),
-                                  border: Border.all(color: Colors.grey.shade300),
-                                ),
-                                child: ListView(
-                                  padding: EdgeInsets.zero,
-                                  shrinkWrap: true,
-                                  children: classes.where((c) => c['name'] != currentSelection).map((c) {
-                                    return ListTile(
-                                      dense: true,
-                                      leading: CircleAvatar(backgroundColor: Color(c['color']), radius: 6),
-                                      title: Text(c['name']),
-                                      onTap: () {
-                                        setStateDialog(() { currentSelection = c['name']; });
-                                        closeDropdown();
-                                      },
-                                    );
-                                  }).toList(),
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    );
-                  },
-                );
-                Overlay.of(context).insert(dropdownOverlay!);
-                isDropdownOpen = true;
-                setStateDialog(() {});
-              }
-              final selectedClassData = classes.firstWhere((c) => c['name'] == currentSelection, orElse: () => {'color': Colors.grey.toARGB32()});
-              Color selectedColor = Color(selectedClassData['color']);
-
-              return PopScope(
-                onPopInvokedWithResult: (_, _) => closeDropdown(),
-                child: AlertDialog(
-                  title: const Text("Assign Class"),
-                  contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
-                  content: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: CompositedTransformTarget(
-                              link: layerLink,
-                              child: InkWell(
-                                onTap: toggleDropdown,
-                                borderRadius: BorderRadius.circular(8),
-                                child: Container(
-                                  height: 48,
-                                  padding: const EdgeInsets.symmetric(horizontal: 12),
-                                  decoration: BoxDecoration(border: Border.all(color: Colors.grey), borderRadius: BorderRadius.circular(8)),
-                                  child: Row(
-                                    children: [
-                                      CircleAvatar(backgroundColor: selectedColor, radius: 6),
-                                      const SizedBox(width: 10),
-                                      Expanded(child: Text(currentSelection, overflow: TextOverflow.ellipsis)),
-                                      Icon(isDropdownOpen ? Icons.arrow_drop_up : Icons.arrow_drop_down, color: Colors.grey.shade700),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Container(
-                            height: 48, width: 48,
-                            decoration: BoxDecoration(color: Colors.blue.withValues(alpha:0.1), borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.blue.withValues(alpha:0.3))),
-                            child: IconButton(
-                              icon: const Icon(Icons.add, color: Colors.blue),
-                              onPressed: () {
-                                closeDropdown();
-                                Navigator.pop(dialogContext, "CREATE_NEW");
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 20),
-                    ],
-                  ),
-                  actions: [
-                    TextButton(onPressed: () { closeDropdown(); Navigator.pop(dialogContext, null); }, child: const Text("Cancel")),
-                    FilledButton(onPressed: () { closeDropdown(); Navigator.pop(dialogContext, currentSelection); }, child: const Text("Select")),
-                  ],
-                ),
-              );
-            },
-          );
-        },
-      );
-
-      if (result == "CREATE_NEW") {
-        if (!mounted) return null;
-        await Navigator.push(context, MaterialPageRoute(builder: (context) => CreateClassPage(projectName: widget.projectName)));
-        widget.onClassesUpdated?.call();
-      } else {
-        return result;
-      }
-    }
-  }
-
-  Future<Map<String, Object>?> _readMetadata(String path) async {
-    try {
-      final exif = await Exif.fromPath(path);
-      final latLong = await exif.getLatLong();
-      final originalDate = await exif.getAttribute('DateTimeOriginal');
-      final digitizedDate = await exif.getAttribute('DateTimeDigitized');
-      await exif.close();
-
-      Map<String, Object> data = {};
-      if (latLong != null) {
-        data['lat'] = latLong.latitude;
-        data['lng'] = latLong.longitude;
-      }
-      if (originalDate != null) data['DateTimeOriginal'] = originalDate;
-      if (digitizedDate != null) data['DateTimeDigitized'] = digitizedDate;
-
-      return data.isNotEmpty ? data : null;
-    } catch (e) {
-      return null; // Fail silently for metadata
-    }
-  }
-
-  Future<void> _writeMetadata(String path, Map<String, Object>? metadata) async {
-    if (metadata == null) return;
-    try {
-      final exif = await Exif.fromPath(path);
-      Map<String, Object> attributes = {};
-
-      if (metadata.containsKey('lat') && metadata.containsKey('lng')) {
-        double lat = metadata['lat'] as double;
-        double lng = metadata['lng'] as double;
-        attributes['GPSLatitude'] = lat.abs();
-        attributes['GPSLatitudeRef'] = lat >= 0 ? 'N' : 'S';
-        attributes['GPSLongitude'] = lng.abs();
-        attributes['GPSLongitudeRef'] = lng >= 0 ? 'E' : 'W';
-      }
-      if (metadata.containsKey('DateTimeOriginal')) {
-        attributes['DateTimeOriginal'] = metadata['DateTimeOriginal']!;
-      }
-      await exif.writeAttributes(attributes);
-      await exif.close();
-    } catch (e) {
-      debugPrint("Error restoring metadata: $e");
-    }
-  }
-
-  Future<void> processImageWithMetadata(String inputPath, String outputPath) async {
-    // --- STEP 1: READ METADATA (Main Thread) ---
-    // We do this BEFORE the image is modified/overwritten
-    Map<String, Object>? preservedMetadata = await _readMetadata(inputPath);
-
-    // --- STEP 2: HEAVY PROCESSING (Background Thread) ---
-    final request = ImageWorkerRequest(
-        inputPath,
-        outputPath,
-        640, // Target Size
-        0    // Min Size
-    );
-
-    // This 'await' pauses execution here, but allows the UI to keep rendering
-    final bool success = await compute(backgroundSquarePad, request);
-
-    // --- STEP 3: RESTORE METADATA (Main Thread) ---
-    if (success && preservedMetadata != null) {
-      await _writeMetadata(outputPath, preservedMetadata);
-    }
-  }
-
   // --- OPTIMIZED BATCH PROCESSOR ---
-
   Future<void> _processBatchBackground(
       List<XFile> files, String targetClass, Map<String, dynamic> history) async {
 
@@ -496,13 +212,10 @@ class _ImagesPageState extends State<ImagesPage> {
     String cleanClass = targetClass.replaceAll(RegExp(r'[^\w\s]+'), '').replaceAll(' ', '_');
     if (cleanClass.isEmpty && widget.projectType == 'classification') cleanClass = "Unclassified";
 
-    // 1. PROCESS IMAGES LOOP
     for (int i = 0; i < files.length; i++) {
-      // STOP if the user left the screen (prevents crashes)
       if (!mounted) break;
 
       globalCounter++;
-
       String nextName = widget.projectType == 'segmentation'
           ? "${cleanProject}_$globalCounter.png"
           : "${cleanProject}_${cleanClass}_$globalCounter.png";
@@ -510,23 +223,21 @@ class _ImagesPageState extends State<ImagesPage> {
       String finalPath = '${projectDir.path}/$nextName';
 
       try {
-        // A. Read Metadata (Main Thread)
-        Map<String, Object>? metadata = await _readMetadata(files[i].path);
+        // A. Read Metadata (Using Helper)
+        Map<String, Object>? metadata = await ImageMetadata.readMetadata(files[i].path);
 
-        // B. Heavy Processing (Background Thread)
+        // B. Heavy Processing (Using Worker)
         final request = ImageWorkerRequest(
             files[i].path,
             finalPath,
-            640, // Target Size
-            0    // Min Size
+            640,
+            0
         );
-
-        // Run in isolate
         final bool success = await compute(backgroundSquarePad, request);
 
         if (success) {
-          // C. Restore Metadata (Main Thread)
-          if (metadata != null) await _writeMetadata(finalPath, metadata);
+          // C. Restore Metadata (Using Helper)
+          if (metadata != null) await ImageMetadata.writeMetadata(finalPath, metadata);
 
           recordsToSave.add({
             'path': finalPath,
@@ -535,24 +246,13 @@ class _ImagesPageState extends State<ImagesPage> {
             'time': metadata?['DateTimeOriginal'],
           });
 
-          // D. Add to local lists (But DON'T setState yet)
           history[nextName] = {'originalName': files[i].name, 'size': await files[i].length()};
-
-          // Add to temp list directly
           _tempUploadedImages.add(File(finalPath));
           widget.labelMap[nextName] = targetClass;
           _currentUploadCount++;
 
-          // --- CRITICAL FIX: BATCH UI UPDATES ---
-          // Only update the UI every 5 images (or if it's the last one).
-          // This prevents flooding the GPU with "redraw" commands.
           if (i % 5 == 0 || i == files.length - 1) {
-            if (mounted) {
-              setState(() {});
-            }
-            // --- CRITICAL FIX: YIELD TO GC ---
-            // Pause for 50ms to let the Memory Garbage Collector run
-            // and the GPU catch up with texture uploads.
+            if (mounted) setState(() {});
             await Future.delayed(const Duration(milliseconds: 50));
           }
         }
@@ -561,7 +261,7 @@ class _ImagesPageState extends State<ImagesPage> {
       }
     }
 
-    // 2. SAVE TO CSV (Batch)
+    // 2. SAVE TO CSV
     for (var record in recordsToSave) {
       Position? pos;
       if (record['lat'] != null && record['lng'] != null) {
@@ -592,7 +292,7 @@ class _ImagesPageState extends State<ImagesPage> {
       );
     }
 
-    await _saveUploadHistory(history);
+    await ImageMetadata.saveUploadHistory(widget.projectName, history);
 
     if (mounted) {
       setState(() { _isUploading = false; });
@@ -603,52 +303,186 @@ class _ImagesPageState extends State<ImagesPage> {
     }
   }
 
-  void _showSkippedFilesDialog(List<String> fileNames) {
-    showDialog(
+  // --- IMPORT ACTIONS ---
+  void _showUploadOptions() {
+    if (_isUploading) return;
+
+    showModalBottomSheet(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Files Skipped"),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              "The following images were too small (<200px) and were not uploaded:",
-              style: TextStyle(fontSize: 13, color: Colors.grey),
-            ),
-            const SizedBox(height: 10),
-            Container(
-              height: 150,
-              width: double.maxFinite,
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey.shade300),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: ListView.builder(
-                shrinkWrap: true,
-                itemCount: fileNames.length,
-                itemBuilder: (context, index) {
-                  return ListTile(
-                    dense: true,
-                    title: Text(
-                      fileNames[index],
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                    ),
-                    leading: const Icon(Icons.warning, color: Colors.orange, size: 16),
-                  );
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (BuildContext ctx) {
+        return SafeArea(
+          child: Wrap(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.photo_library, color: Colors.blue),
+                title: const Text('Select Images'),
+                subtitle: const Text('Pick from Gallery'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickFromGallery();
                 },
               ),
+              ListTile(
+                leading: const Icon(Icons.folder, color: Colors.amber),
+                title: const Text('Select Folder'),
+                subtitle: const Text('Import all images from a folder'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _pickFromFolder();
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _pickFromGallery() async {
+    if (Platform.isAndroid) {
+      if (await Permission.photos.request().isDenied &&
+          await Permission.storage.request().isDenied) {
+        return;
+      }
+    }
+    final ImagePicker picker = ImagePicker();
+    final List<XFile> pickedFiles = await picker.pickMultiImage();
+    if (pickedFiles.isNotEmpty) {
+      await _processImportSequence(pickedFiles);
+    }
+  }
+
+  Future<void> _pickFromFolder() async {
+    String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
+    if (selectedDirectory == null) return;
+    final dir = Directory(selectedDirectory);
+    List<XFile> folderImages = [];
+    try {
+      final List<FileSystemEntity> entities = dir.listSync(recursive: false);
+      for (var entity in entities) {
+        if (entity is File) {
+          final String path = entity.path.toLowerCase();
+          if (path.endsWith('.jpg') || path.endsWith('.jpeg') ||
+              path.endsWith('.png') || path.endsWith('.webp')) {
+            folderImages.add(XFile(entity.path));
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("Directory access error: $e");
+      return;
+    }
+    if (folderImages.isNotEmpty) {
+      await _processImportSequence(folderImages);
+    }
+  }
+
+  Future<void> _processImportSequence(List<XFile> pickedFiles) async {
+    // Using Helper
+    Map<String, dynamic> history = await ImageMetadata.loadUploadHistory(widget.projectName);
+    List<XFile> filesToProcess = [];
+    List<String> duplicateNames = [];
+
+    for (var file in pickedFiles) {
+      int fileSize = await file.length();
+      String fileNameOnly = file.path.split(Platform.pathSeparator).last;
+      bool isDuplicate = false;
+
+      for (var entry in history.values) {
+        if (entry is Map) {
+          if (entry['originalName'] == fileNameOnly && entry['size'] == fileSize) {
+            isDuplicate = true;
+            break;
+          }
+        }
+      }
+
+      if (isDuplicate) {
+        duplicateNames.add(fileNameOnly);
+      } else {
+        filesToProcess.add(file);
+      }
+    }
+
+    if (!mounted) return;
+
+    if (duplicateNames.isNotEmpty) {
+      bool? uploadDuplicates = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text("Duplicate Files Detected"),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text("${duplicateNames.length} image(s) from this folder are already in the project."),
+              const SizedBox(height: 10),
+              Container(
+                constraints: const BoxConstraints(maxHeight: 120),
+                decoration: BoxDecoration(
+                  color: Colors.black.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.all(8),
+                  children: duplicateNames.map((n) => Text("• $n", style: const TextStyle(fontSize: 11))).toList(),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text("Skip Duplicates"),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text("Upload Anyway"),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("OK"),
-          ),
-        ],
-      ),
-    );
+      );
+
+      if (uploadDuplicates == true) {
+        for (var name in duplicateNames) {
+          final originalFile = pickedFiles.firstWhere((f) => f.path.endsWith(name));
+          filesToProcess.add(originalFile);
+        }
+      }
+    }
+
+    if (filesToProcess.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("No new images to upload.")));
+      return;
+    }
+    if (!mounted) return;
+
+    String targetClass = "Unclassified";
+    if (widget.projectType == 'classification') {
+      // Using Helper
+      String? selected = await ClassPickerDialog.show(
+          context: context,
+          projectName: widget.projectName,
+          onClassesUpdated: widget.onClassesUpdated
+      );
+      if (selected == null) return;
+      targetClass = selected;
+    } else if (_filterClass != "All") {
+      targetClass = _filterClass;
+    }
+
+    setState(() {
+      _isUploading = true;
+      _totalUploads = filesToProcess.length;
+      _currentUploadCount = 0;
+    });
+
+    _processBatchBackground(filesToProcess, targetClass, history);
   }
 
   // --- BUILD UI ---
@@ -741,211 +575,6 @@ class _ImagesPageState extends State<ImagesPage> {
     return slivers;
   }
 
-  // --- IMPORT ACTIONS ---
-
-  // 1. The Trigger (Menu)
-  void _showUploadOptions() {
-    if (_isUploading) return;
-
-    showModalBottomSheet(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (BuildContext ctx) {
-        return SafeArea(
-          child: Wrap(
-            children: [
-              ListTile(
-                leading: const Icon(Icons.photo_library, color: Colors.blue),
-                title: const Text('Select Images'),
-                subtitle: const Text('Pick from Gallery'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _pickFromGallery();
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.folder, color: Colors.amber),
-                title: const Text('Select Folder'),
-                subtitle: const Text('Import all images from a folder'),
-                onTap: () {
-                  Navigator.pop(ctx);
-                  _pickFromFolder();
-                },
-              ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  // 2. Pick from Gallery (Original Method)
-  Future<void> _pickFromGallery() async {
-    if (Platform.isAndroid) {
-      // Check specific permissions based on Android version if needed
-      // Usually photos or storage
-      if (await Permission.photos.request().isDenied &&
-          await Permission.storage.request().isDenied) {
-        return;
-      }
-    }
-
-    final ImagePicker picker = ImagePicker();
-    final List<XFile> pickedFiles = await picker.pickMultiImage();
-
-    if (pickedFiles.isNotEmpty) {
-      await _processImportSequence(pickedFiles);
-    }
-  }
-
-  // 3. Pick from Folder (New Method)
-  Future<void> _pickFromFolder() async {
-    // 1. Pick the directory
-    String? selectedDirectory = await FilePicker.platform.getDirectoryPath();
-
-    if (selectedDirectory == null) return;
-
-    final dir = Directory(selectedDirectory);
-    List<XFile> folderImages = [];
-
-    try {
-      // 2. listSync can fail if permissions aren't perfect.
-      // It's safer to use an async list and catch errors per file.
-      final List<FileSystemEntity> entities = dir.listSync(recursive: false);
-
-      for (var entity in entities) {
-        if (entity is File) {
-          final String path = entity.path.toLowerCase();
-          if (path.endsWith('.jpg') || path.endsWith('.jpeg') ||
-              path.endsWith('.png') || path.endsWith('.webp')) {
-            folderImages.add(XFile(entity.path));
-          }
-        }
-      }
-    } catch (e) {
-      debugPrint("Directory access error: $e");
-      // If this fails, it's usually an Android Permission issue (Scoped Storage)
-      return;
-    }
-
-    if (folderImages.isNotEmpty) {
-      // 3. Hand off to the FIXED sequence logic
-      await _processImportSequence(folderImages);
-    }
-  }
-
-  // 4. Shared Processing Logic (Refactored from old _importImage)
-  Future<void> _processImportSequence(List<XFile> pickedFiles) async {
-    Map<String, dynamic> history = await _loadUploadHistory();
-    List<XFile> filesToProcess = [];
-    List<String> duplicateNames = [];
-
-    for (var file in pickedFiles) {
-      int fileSize = await file.length();
-      // Use the actual filename from the path
-      String fileNameOnly = file.path.split(Platform.pathSeparator).last;
-      bool isDuplicate = false;
-
-      for (var entry in history.values) {
-        if (entry is Map) {
-          // This will now match because both are 'original' sizes
-          if (entry['originalName'] == fileNameOnly && entry['size'] == fileSize) {
-            isDuplicate = true;
-            break;
-          }
-        }
-      }
-
-      if (isDuplicate) {
-        duplicateNames.add(fileNameOnly);
-      } else {
-        filesToProcess.add(file);
-      }
-    }
-
-    if (!mounted) return;
-
-    if (duplicateNames.isNotEmpty) {
-      // Show dialog
-      bool? uploadDuplicates = await showDialog<bool>(
-        context: context,
-        barrierDismissible: false,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text("Duplicate Files Detected"),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text("${duplicateNames.length} image(s) from this folder are already in the project."),
-              const SizedBox(height: 10),
-              const Text("Upload them again as new copies?", style: TextStyle(fontSize: 12, color: Colors.grey)),
-              const SizedBox(height: 10),
-              Container(
-                constraints: const BoxConstraints(maxHeight: 120),
-                decoration: BoxDecoration(
-                  color: Colors.black.withValues(alpha: 0.05),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: ListView(
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.all(8),
-                  children: duplicateNames.map((n) => Text("• $n", style: const TextStyle(fontSize: 11))).toList(),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, false),
-              child: const Text("Skip Duplicates"),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, true),
-              child: const Text("Upload Anyway"),
-            ),
-          ],
-        ),
-      );
-
-      if (uploadDuplicates == true) {
-        // Add only the duplicates that were caught back into the list
-        for (var name in duplicateNames) {
-          final originalFile = pickedFiles.firstWhere((f) => f.path.endsWith(name));
-          filesToProcess.add(originalFile);
-        }
-      }
-    }
-
-    if (filesToProcess.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("No new images to upload.")),
-      );
-      return;
-    }
-
-    // RE-VERIFY mounting before showing class selector
-    if (!mounted) return;
-
-    String targetClass = "Unclassified";
-    if (widget.projectType == 'classification') {
-      String? selected = await _handleClassSelectionFlow();
-      if (selected == null) return;
-      targetClass = selected;
-    } else if (_filterClass != "All") {
-      targetClass = _filterClass;
-    }
-
-    setState(() {
-      _isUploading = true;
-      _totalUploads = filesToProcess.length;
-      _currentUploadCount = 0;
-    });
-
-    _processBatchBackground(filesToProcess, targetClass, history);
-  }
-
   @override
   Widget build(BuildContext context) {
     if (widget.isLoading) return const Center(child: CircularProgressIndicator());
@@ -968,212 +597,163 @@ class _ImagesPageState extends State<ImagesPage> {
     }).toList();
 
     return Scaffold(
-      body: Column(
-        children: [
-          if (_isSelectionMode)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.blue.withValues(alpha: 0.1),
-                border: Border(bottom: BorderSide(color: Colors.blue.withValues(alpha: 0.2))),
-              ),
-              child: SafeArea(
-                top: false, bottom: false,
-                child: Row(
-                  children: [
-                    IconButton(icon: const Icon(Icons.close), onPressed: _clearSelection),
-                    const SizedBox(width: 8),
-                    Text("${_selectedPaths.length} Selected", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                    const Spacer(),
-                    IconButton(icon: const Icon(Icons.select_all), onPressed: () => _selectAll(filteredImages)),
-                    if (widget.projectType == 'classification')
-                      IconButton(icon: const Icon(Icons.label), onPressed: _tagSelectedImages),
-                    IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: _deleteSelectedImages),
-                  ],
+        body: Column(
+          children: [
+            if (_isSelectionMode)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.blue.withValues(alpha: 0.1),
+                  border: Border(bottom: BorderSide(color: Colors.blue.withValues(alpha: 0.2))),
                 ),
-              ),
-            ),
-
-          if (_isUploading)
-            LinearProgressIndicator(value: _totalUploads > 0 ? _currentUploadCount / _totalUploads : 0),
-
-          Expanded(
-            child: CustomScrollView(
-              physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
-              slivers: [
-                SliverToBoxAdapter(
-                  child: Padding(
-                    padding: const EdgeInsets.all(10),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        if (widget.projectType == 'classification') ...[
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(_isUploading ? "Uploading $_currentUploadCount / $_totalUploads..." : "${filteredImages.length} Images", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey[600])),
-                                Row(
-                                  children: [
-                                    Text("Group by Class", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.grey[600])),
-                                    Switch(value: _groupByClass, onChanged: (val) => setState(() => _groupByClass = val)),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                          ClassSelectorDropdown(
-                            projectName: widget.projectName,
-                            selectedClass: _filterClass,
-                            classes: widget.projectClasses,
-                            onClassAdded: widget.onClassesUpdated,
-                            onClassSelected: (newClass) => setState(() => _filterClass = newClass),
-                          ),
-                        ] else ...[
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text("${filteredImages.length} Images", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey[600])),
-                                if (_isUploading) Text("Processing...", style: const TextStyle(fontSize: 12, color: Colors.green)),
-                              ],
-                            ),
-                          ),
-                        ]
-                      ],
-                    ),
+                child: SafeArea(
+                  top: false, bottom: false,
+                  child: Row(
+                    children: [
+                      IconButton(icon: const Icon(Icons.close), onPressed: _clearSelection),
+                      const SizedBox(width: 8),
+                      Text("${_selectedPaths.length} Selected", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                      const Spacer(),
+                      IconButton(icon: const Icon(Icons.select_all), onPressed: () => _selectAll(filteredImages)),
+                      if (widget.projectType == 'classification')
+                        IconButton(icon: const Icon(Icons.label), onPressed: _tagSelectedImages),
+                      IconButton(icon: const Icon(Icons.delete, color: Colors.red), onPressed: _deleteSelectedImages),
+                    ],
                   ),
                 ),
+              ),
 
-                if (filteredImages.isEmpty && !_isUploading)
-                  const SliverFillRemaining(child: Center(child: Text("No images found")))
-                else if (_groupByClass && widget.projectType == 'classification')
-                  ..._buildGroupedSlivers(filteredImages)
-                else
-                  SliverPadding(
-                    padding: const EdgeInsets.symmetric(horizontal: 10),
-                    sliver: SliverImageGrid(
-                      columns: 3,
-                      dataList: flatGridData,
-                      projectName: widget.projectName,
-                      onBack: () { setState(() {}); widget.onDataChanged?.call(); },
-                      projectClasses: widget.projectClasses,
-                      projectType: widget.projectType,
-                      onAnnotate: widget.onAnnotate,
-                      selectedPaths: _selectedPaths,
-                      onSelectionChanged: _toggleSelection,
+            if (_isUploading)
+              LinearProgressIndicator(value: _totalUploads > 0 ? _currentUploadCount / _totalUploads : 0),
+
+            Expanded(
+              child: CustomScrollView(
+                physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (widget.projectType == 'classification') ...[
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(_isUploading ? "Uploading $_currentUploadCount / $_totalUploads..." : "${filteredImages.length} Images", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey[600])),
+                                  Row(
+                                    children: [
+                                      Text("Group by Class", style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: Colors.grey[600])),
+                                      Switch(value: _groupByClass, onChanged: (val) => setState(() => _groupByClass = val)),
+                                    ],
+                                  ),
+                                ],
+                              ),
+                            ),
+                            ClassSelectorDropdown(
+                              projectName: widget.projectName,
+                              selectedClass: _filterClass,
+                              classes: widget.projectClasses,
+                              onClassAdded: widget.onClassesUpdated,
+                              onClassSelected: (newClass) => setState(() => _filterClass = newClass),
+                            ),
+                          ] else ...[
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 12.0),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text("${filteredImages.length} Images", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey[600])),
+                                  if (_isUploading) Text("Processing...", style: const TextStyle(fontSize: 12, color: Colors.green)),
+                                ],
+                              ),
+                            ),
+                          ]
+                        ],
+                      ),
                     ),
                   ),
-                const SliverToBoxAdapter(child: SizedBox(height: 80)),
-              ],
+
+                  if (filteredImages.isEmpty && !_isUploading)
+                    const SliverFillRemaining(child: Center(child: Text("No images found")))
+                  else if (_groupByClass && widget.projectType == 'classification')
+                    ..._buildGroupedSlivers(filteredImages)
+                  else
+                    SliverPadding(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      sliver: SliverImageGrid(
+                        columns: 3,
+                        dataList: flatGridData,
+                        projectName: widget.projectName,
+                        onBack: () { setState(() {}); widget.onDataChanged?.call(); },
+                        projectClasses: widget.projectClasses,
+                        projectType: widget.projectType,
+                        onAnnotate: widget.onAnnotate,
+                        selectedPaths: _selectedPaths,
+                        onSelectionChanged: _toggleSelection,
+                      ),
+                    ),
+                  const SliverToBoxAdapter(child: SizedBox(height: 80)),
+                ],
+              ),
             ),
-          ),
-        ],
-      ),
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      floatingActionButton: _isSelectionMode
-          ? null
-          : FloatingActionButton.extended(
-        heroTag: 'fab_images',
-        onPressed: _showUploadOptions,
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        highlightElevation: 0,
-        extendedPadding: EdgeInsets.zero,
-        focusElevation: 0,
-        hoverElevation: 0,
-        splashColor: Colors.transparent,
-        label: Ink(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(30),
-            gradient: const LinearGradient(
-              begin: Alignment.centerLeft,
-              end: Alignment.centerRight,
-              colors: [
-                Color(0xFFAED581),
-                Color(0xFF9CCC65),
-                Color(0xFF9CCC65),
-                Color(0xFF8BC34A),
-                Color(0xFF8BC34A),
-                Color(0xFF7CB342),
-                Color(0xFF689F38),
-              ],
-            ),
-          ),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
-            constraints: const BoxConstraints(minHeight: 48),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _isUploading
-                    ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
-                )
-                    : const Icon(Icons.add_a_photo_outlined, color: Colors.white),
-                const SizedBox(width: 8),
-                Text(
-                  _isUploading ? "Uploading..." : "Upload",
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
-                ),
-              ],
-            ),
-          ),
+          ],
         ),
-      )
+        floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+        floatingActionButton: _isSelectionMode
+            ? null
+            : FloatingActionButton.extended(
+          heroTag: 'fab_images',
+          onPressed: _showUploadOptions,
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          highlightElevation: 0,
+          extendedPadding: EdgeInsets.zero,
+          focusElevation: 0,
+          hoverElevation: 0,
+          splashColor: Colors.transparent,
+          label: Ink(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(30),
+              gradient: const LinearGradient(
+                begin: Alignment.centerLeft,
+                end: Alignment.centerRight,
+                colors: [
+                  Color(0xFFAED581),
+                  Color(0xFF9CCC65),
+                  Color(0xFF9CCC65),
+                  Color(0xFF8BC34A),
+                  Color(0xFF8BC34A),
+                  Color(0xFF7CB342),
+                  Color(0xFF689F38),
+                ],
+              ),
+            ),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 0),
+              constraints: const BoxConstraints(minHeight: 48),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _isUploading
+                      ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2),
+                  )
+                      : const Icon(Icons.add_a_photo_outlined, color: Colors.white),
+                  const SizedBox(width: 8),
+                  Text(
+                    _isUploading ? "Uploading..." : "Upload",
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        )
     );
-  }
-}
-
-class ImageWorkerRequest {
-  final String inputPath;
-  final String outputPath;
-  final int targetSize;
-  final int minSize;
-
-  ImageWorkerRequest(this.inputPath, this.outputPath, this.targetSize, this.minSize);
-}
-
-Future<bool> backgroundSquarePad(ImageWorkerRequest request) async {
-  try {
-    final file = File(request.inputPath);
-    final bytes = await file.readAsBytes();
-
-    // 1. Decode
-    final img.Image? src = img.decodeImage(bytes);
-    if (src == null) return false;
-
-    // 2. Resize (Fit within target box)
-    final img.Image resized = img.copyResize(
-        src,
-        width: request.targetSize,
-        height: request.targetSize,
-        maintainAspect: true
-    );
-
-    // 3. Create Square Canvas (Transparent)
-    final img.Image canvas = img.Image(
-        width: request.targetSize,
-        height: request.targetSize,
-        numChannels: 4 // RGBA
-    );
-
-    // 4. Center the image
-    final int dstX = (request.targetSize - resized.width) ~/ 2;
-    final int dstY = (request.targetSize - resized.height) ~/ 2;
-    img.compositeImage(canvas, resized, dstX: dstX, dstY: dstY);
-
-    // 5. Encode & Write to Disk
-    // We write to outputPath (which might be the same as inputPath if overwriting)
-    await File(request.outputPath).writeAsBytes(img.encodePng(canvas));
-
-    return true;
-  } catch (e) {
-    debugPrint("Background Worker Error: $e");
-    return false;
   }
 }

@@ -6,9 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
-import '../components/annotation_layer.dart';
-import '../functions/metadata_handle.dart';
-import '../components/layer_painter.dart';
+import '../components/annotation/annotation_layer.dart';
+import '../functions/data_service/metadata_handle.dart';
+import '../components/annotation/layer_painter.dart';
 
 enum DrawingTool { brush, eraser }
 
@@ -798,8 +798,10 @@ class _AnnotationPageState extends State<AnnotationPage> {
                     color: Colors.black.withValues(alpha:0.7),
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(
-                        color: hasLabel ? Color(activeLayerData!.labelColor!) : Colors.grey,
-                        width: 1
+                      color: (activeLayerData?.labelColor != null)
+                          ? Color(activeLayerData!.labelColor!)
+                          : Colors.grey,
+                      width: 1,
                     ),
                   ),
                   child: Row(
@@ -808,7 +810,7 @@ class _AnnotationPageState extends State<AnnotationPage> {
                       Icon(Icons.circle, color: hasLabel ? Color(activeLayerData!.labelColor!) : Colors.grey, size: 12),
                       const SizedBox(width: 8),
                       Text(
-                        hasLabel ? activeLayerData!.labelName! : "No Label Selected",
+                        activeLayerData?.labelName ?? "No Label Selected",
                         style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
                       ),
                     ],

@@ -6,35 +6,40 @@ class DrawingStroke {
   final Color color;
   final double width;
   final bool isEraser;
+  final bool filled; // <-- Add this
 
   DrawingStroke({
     required this.points,
     required this.color,
     required this.width,
     this.isEraser = false,
+    this.filled = false, // <-- Add this
   });
 
+  // --- THE MISSING METHOD ---
   DrawingStroke copyWith({
     List<Offset>? points,
     Color? color,
     double? width,
     bool? isEraser,
+    bool? filled,
   }) {
     return DrawingStroke(
       points: points ?? this.points,
       color: color ?? this.color,
       width: width ?? this.width,
       isEraser: isEraser ?? this.isEraser,
+      filled: filled ?? this.filled,
     );
   }
 
-  // --- SERIALIZATION ---
   Map<String, dynamic> toJson() {
     return {
       'p': points.map((e) => [e.dx, e.dy]).toList(),
       'c': color.toARGB32(),
       'w': width,
       'e': isEraser,
+      'f': filled, // <-- Save fill state
     };
   }
 
@@ -45,7 +50,8 @@ class DrawingStroke {
           .toList(),
       color: Color(json['c']),
       width: (json['w'] as num).toDouble(),
-      isEraser: json['e'] ?? false,
+      isEraser: json['e'] ?? json['isEraser'] ?? false,
+      filled: json['f'] ?? false, // <-- Load fill state
     );
   }
 }

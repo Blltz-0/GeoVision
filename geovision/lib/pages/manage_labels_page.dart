@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../components/label_creator.dart';
-import '../functions/metadata_handle.dart';
+import '../components/classes/label_creator.dart';
+import '../functions/data_service/metadata_handle.dart';
 
 class ManageLabelsPage extends StatefulWidget {
   final String projectName;

@@ -59,8 +59,7 @@ class LayerPainter extends CustomPainter {
     final paint = Paint()
       ..strokeWidth = stroke.width
       ..strokeCap = StrokeCap.round
-      ..strokeJoin = StrokeJoin.round
-      ..style = PaintingStyle.stroke;
+      ..strokeJoin = StrokeJoin.round;
 
     if (stroke.isEraser) {
       paint.blendMode = BlendMode.clear;
@@ -75,7 +74,16 @@ class LayerPainter extends CustomPainter {
       for (int i = 1; i < stroke.points.length; i++) {
         path.lineTo(stroke.points[i].dx, stroke.points[i].dy);
       }
-      canvas.drawPath(path, paint);
+
+      // Check if the stroke was imported as a fillable polygon
+      if (stroke.filled) {
+        path.close();
+        paint.style = PaintingStyle.fill; // This fills the inside!
+        canvas.drawPath(path, paint);
+      } else {
+        paint.style = PaintingStyle.stroke; // Normal brush behavior
+        canvas.drawPath(path, paint);
+      }
     }
   }
 

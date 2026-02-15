@@ -1,12 +1,11 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'dart:convert';
 import 'package:permission_handler/permission_handler.dart';
-
-// COMPONENT IMPORTS
-import '../components/project_card.dart';
-import '../components/project_list.dart';
+import '../components/project/project_card.dart';
+import '../components/project/project_list.dart';
 import '../functions/data_service/import_service.dart';
 import 'home_add.dart';
 import 'home_tabs/about.dart';
@@ -153,25 +152,28 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _showAddOptions() {
+    // 1. THIS IS THE STABLE CONTEXT.
+    // It belongs to the HomePage, which stays alive throughout the import.
+    final homeContext = context;
+
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text("Add New Project", textAlign: TextAlign.center),
+        title: const Text("Add New Project"),
         content: Column(
-          mainAxisSize: MainAxisSize.min, // Constrains the modal to the content
+          mainAxisSize: MainAxisSize.min,
           children: [
             _buildActionCard(
               icon: Icons.create_new_folder,
               color: Colors.green,
               title: "Create New Project",
-              onTap: () async {
-                Navigator.pop(context);
-                await Navigator.push(
-                  context,
+              onTap: () {
+                Navigator.pop(dialogContext); // Close menu
+                Navigator.push(
+                  homeContext,
                   MaterialPageRoute(builder: (context) => const HomeAddPage()),
                 );
-                _loadFolders();
               },
             ),
             const SizedBox(height: 12),
@@ -180,13 +182,60 @@ class _HomePageState extends State<HomePage> {
               color: Colors.blue,
               title: "Import Project (.zip)",
               onTap: () async {
-                Navigator.pop(context);
-                bool success = await ImportService.importProject(context);
-                if (success) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Project imported successfully!")),
+                // 1. Close the menu immediately using its specific context
+                Navigator.pop(dialogContext);
+
+                // 2. Pick the file
+                FilePickerResult? result = await FilePicker.platform.pickFiles(
+                  type: FileType.custom,
+                  allowedExtensions: ['zip'],
+                );
+
+                // 3. EXIT if cancelled or if the user left the screen
+                if (result == null || result.files.single.path == null) return;
+                if (!mounted) return;
+
+                // 4. SHOW SPINNER using the STABLE homeContext
+                // We check homeContext.mounted to be 100% safe
+                if (homeContext.mounted) {
+                  showDialog(
+                    context: homeContext,
+                    barrierDismissible: false,
+                    builder: (loadingContext) => const PopScope(
+                      canPop: false,
+                      child: AlertDialog(
+                        content: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            CircularProgressIndicator(),
+                            SizedBox(height: 20),
+                            Text("Importing Project..."),
+                          ],
+                        ),
+                      ),
+                    ),
                   );
-                  _loadFolders();
+                }
+
+                try {
+                  // 5. RUN IMPORT
+                  bool success = await ImportService.executeImport(homeContext, result);
+
+                  // 6. DISMISS SPINNER safely
+                  if (homeContext.mounted) {
+                    Navigator.of(homeContext, rootNavigator: true).pop();
+                  }
+
+                  if (success) {
+                    _loadFolders();
+                    ScaffoldMessenger.of(homeContext).showSnackBar(
+                      const SnackBar(content: Text("Import Successful!")),
+                    );
+                  }
+                } catch (e) {
+                  if (homeContext.mounted) {
+                    Navigator.of(homeContext, rootNavigator: true).pop();
+                  }
                 }
               },
             ),

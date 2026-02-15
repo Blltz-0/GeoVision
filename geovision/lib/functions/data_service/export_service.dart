@@ -8,14 +8,14 @@ import 'package:image/image.dart' as img;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
-import '../metadata_handle.dart';
-import '../map_generator.dart';
-import '../location_clusterer.dart';
+import '../../components/annotation/annotation_layer.dart';
+import '../maps/location_clusterer.dart';
+import '../maps/map_generator.dart';
 import '../coco_converter.dart';
-import '../../components/annotation_layer.dart';
+import 'metadata_handle.dart';
 
 class ExportService {
-  static Future<void> exportProject(String projectName) async {
+  static Future<void> exportProject(String projectName, {ExportCancellationToken? token}) async {
     List<File> tempFiles = [];
     try {
       final appDir = await getApplicationDocumentsDirectory();
@@ -25,6 +25,7 @@ class ExportService {
       final imagesDir = Directory('${sourceDir.path}/images');
       final annotationDir = Directory('${sourceDir.path}/annotation');
       final zipPath = '${tempDir.path}/${projectName}_COCO_Export.zip';
+      if (token?.isCancelled ?? false) return;
 
       // --- 1. FETCH METADATA (Fast) ---
       final geoData = await MetadataService.readCsvData(projectName);
@@ -51,13 +52,15 @@ class ExportService {
 
       // --- 2. HEAVY PROCESSING (Isolate) ---
       // Moving the 1000+ image loop and dimension fetching to background
-      final Map<String, dynamic> exportResults = await compute(_processCocoDataInBackground, {
+      final Map<String, dynamic> exportResults = await _processCocoDataInBackground({
         'geoData': geoData,
         'projectClasses': projectClasses,
         'projectType': projectType,
         'imagesDirPath': imagesDir.path,
         'annotationDirPath': annotationDir.path,
       });
+
+      if (token?.isCancelled ?? false) return;
 
       // --- 3. CONSTRUCT & SERIALIZE JSON (Isolate) ---
       final fullCocoJson = {
@@ -89,11 +92,15 @@ class ExportService {
         'lng': (e['lng'] as num).toDouble()
       }).toList();
 
+      if (token?.isCancelled ?? false) return;
+
       if (points.isNotEmpty) {
         final clusters = await compute(_clusterPointsInBackground, {
           'points': points,
           'distance': 500.0,
         });
+
+
 
         for (int i = 0; i < clusters.length; i++) {
           final mapImg = await MapCompositor.generateFinalMap(clusters[i]);
@@ -108,20 +115,62 @@ class ExportService {
       }
 
       // --- 5. README ---
+      final List<dynamic> imagesList = exportResults['images'] ?? [];
+      final List<dynamic> categoriesList = exportResults['categories'] ?? [];
+
       final readmeFile = File('${sourceDir.path}/README.txt');
       final now = DateTime.now();
-      final dateStr = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}";
+      final dateStr = "${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')} ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}";
 
       final StringBuffer readmeBuffer = StringBuffer();
       readmeBuffer.writeln("PROJECT NAME: $projectName");
       readmeBuffer.writeln("GENERATED ON: $dateStr");
       readmeBuffer.writeln("AUTHOR:       $author");
+      readmeBuffer.writeln("SOURCE TOOL:  https://github.com/Blltz-0/GeoVision");
+      readmeBuffer.writeln("DATA LICENSE: CC BY 4.0 (Free to use and modify with attribution)");
       readmeBuffer.writeln("==================================================");
+      readmeBuffer.writeln("");
+
+      if (description.isNotEmpty) {
+        readmeBuffer.writeln("DESCRIPTION");
+        readmeBuffer.writeln("-----------");
+        readmeBuffer.writeln(description);
+        readmeBuffer.writeln("");
+      }
+
+      readmeBuffer.writeln("DATASET INFORMATION");
+      readmeBuffer.writeln("-------------------");
+      if (projectType == 'segmentation') {
+        readmeBuffer.writeln("Type: Image Segmentation");
+        readmeBuffer.writeln("Format: COCO (Polygon Masks)");
+      } else {
+        readmeBuffer.writeln("Type: Image Classification");
+        readmeBuffer.writeln("Format: COCO (Full-Image Bounding Boxes)");
+      }
+
+      // Fix: Using the extracted imagesList
+      readmeBuffer.writeln("Total Images Exported: ${imagesList.length}");
+
+      // Optional: Add categories found
+      if (categoriesList.isNotEmpty) {
+        List<String> categoryNames = categoriesList.map((e) => e['name'].toString()).toList();
+        readmeBuffer.writeln("Categories: ${categoryNames.join(', ')}");
+      }
+      readmeBuffer.writeln("");
+
       readmeBuffer.writeln("DIRECTORY STRUCTURE");
+      readmeBuffer.writeln("-------------------");
+      readmeBuffer.writeln("/");
       readmeBuffer.writeln(" ├── _annotations.coco.json");
-      readmeBuffer.writeln(" ├── project_data.geojson");
+      readmeBuffer.writeln(" │    -> The Master Dataset file (COCO Standard).");
+      readmeBuffer.writeln(" │");
+      readmeBuffer.writeln(" ├── project_data.geojson"); // Changed to geojson to match your recent updates
+      readmeBuffer.writeln(" │    -> Raw metadata (GPS, Timestamp, Labels).");
+      readmeBuffer.writeln(" │");
       readmeBuffer.writeln(" ├── images/");
-      readmeBuffer.writeln(" ├── map_overview_X.png");
+      readmeBuffer.writeln(" │    -> Source images.");
+      readmeBuffer.writeln("");
+      readmeBuffer.writeln("Generated by GeoVisionTagger");
 
       await readmeFile.writeAsString(readmeBuffer.toString());
       tempFiles.add(readmeFile);
@@ -129,6 +178,8 @@ class ExportService {
       // --- 6. ZIP AND SHARE ---
       final File zipFile = File(zipPath);
       if (await zipFile.exists()) await zipFile.delete();
+
+      if (token?.isCancelled ?? false) return;
 
       await compute(_zipInBackground, [sourceDir.path, zipPath]);
 
@@ -150,7 +201,6 @@ class ExportService {
 
 // --- ISOLATE FUNCTIONS ---
 
-/// Handles the massive loop of 1000+ images and annotations in the background.
 Future<Map<String, dynamic>> _processCocoDataInBackground(Map<String, dynamic> params) async {
   final List<dynamic> geoData = params['geoData'];
   final List<dynamic> projectClasses = params['projectClasses'];
@@ -162,9 +212,10 @@ Future<Map<String, dynamic>> _processCocoDataInBackground(Map<String, dynamic> p
   List<Map<String, dynamic>> categories = [];
   int nextCatId = 1;
 
+  // 1. Initialize categories from project settings
   for (var c in projectClasses) {
-    String name = c['name'];
-    if (name.toLowerCase() == 'unclassified') continue;
+    String name = (c['name'] ?? "").toString().trim();
+    if (name.isEmpty || name.toLowerCase() == 'unclassified') continue;
     if (!classToId.containsKey(name)) {
       classToId[name] = nextCatId;
       categories.add({"id": nextCatId, "name": name, "supercategory": "object"});
@@ -186,10 +237,8 @@ Future<Map<String, dynamic>> _processCocoDataInBackground(Map<String, dynamic> p
     if (!imageFile.existsSync()) {
       imageFile = File('$imagesDirPath/$filename');
     }
-
     if (!imageFile.existsSync()) continue;
 
-    // Use a lighter way to get dimensions in Isolate using the 'image' package
     final Uint8List bytes = imageFile.readAsBytesSync();
     final img.Image? decoded = img.decodeImage(bytes);
     if (decoded == null) continue;
@@ -206,23 +255,28 @@ Future<Map<String, dynamic>> _processCocoDataInBackground(Map<String, dynamic> p
     });
 
     if (projectType == 'classification') {
-      String? label = row['class']?.toString();
-      if (label != null && label.isNotEmpty && label != "Unclassified") {
-        int catId = classToId[label] ?? 0;
-        if (catId != 0) {
-          annotations.add({
-            "id": annotationIdCounter++,
-            "image_id": imageId,
-            "category_id": catId,
-            "bbox": [0, 0, imgWidth, imgHeight],
-            "area": imgWidth * imgHeight,
-            "segmentation": [],
-            "iscrowd": 0
-          });
+      String? label = row['class']?.toString().trim();
+      if (label != null && label.isNotEmpty && label.toLowerCase() != "unclassified") {
+        // Dynamic category discovery for classification
+        if (!classToId.containsKey(label)) {
+          classToId[label] = nextCatId;
+          categories.add({"id": nextCatId, "name": label, "supercategory": "object"});
+          nextCatId++;
         }
+
+        int catId = classToId[label]!;
+        annotations.add({
+          "id": annotationIdCounter++,
+          "image_id": imageId,
+          "category_id": catId,
+          "bbox": [0.0, 0.0, imgWidth.toDouble(), imgHeight.toDouble()],
+          "area": (imgWidth * imgHeight).toDouble(),
+          "segmentation": [],
+          "iscrowd": 0
+        });
       }
     } else {
-      // Segmentation logic
+      // --- SEGMENTATION LOGIC ---
       String baseName = filename.split('.').first;
       File layerFile = File('$annotationDirPath/${baseName}_data.json');
 
@@ -233,12 +287,21 @@ Future<Map<String, dynamic>> _processCocoDataInBackground(Map<String, dynamic> p
 
         for (var layer in layers) {
           if (!layer.isVisible || layer.strokes.isEmpty) continue;
-          String labelName = layer.labelName ?? "Unclassified";
-          int catId = classToId[labelName] ?? 0;
-          if (catId == 0) continue;
 
-          // Note: If CocoConversionService uses heavy Vector Math,
-          // ensure its methods are static/pure so they work here.
+          // CRITICAL: Pull class from the AnnotationLayer itself
+          String labelName = (layer.labelName ?? "Unclassified").trim();
+          if (labelName.toLowerCase() == "unclassified") continue;
+
+          // Dynamic category discovery for segmentation layers
+          if (!classToId.containsKey(labelName)) {
+            classToId[labelName] = nextCatId;
+            categories.add({"id": nextCatId, "name": labelName, "supercategory": "object"});
+            nextCatId++;
+          }
+
+          int catId = classToId[labelName]!;
+
+          // This call will still fail in an Isolate if it uses dart:ui
           final ann = await CocoConversionService.generateAnnotationForLayer(
             layer: layer,
             imageSize: Size(imgWidth.toDouble(), imgHeight.toDouble()),
@@ -302,4 +365,9 @@ void _zipInBackground(List<String> paths) {
 
 List<List<Map<String, double>>> _clusterPointsInBackground(Map<String, dynamic> params) {
   return LocationClusterer.clusterPoints(params['points'], params['distance']);
+}
+
+class ExportCancellationToken {
+  bool isCancelled = false;
+  void cancel() => isCancelled = true;
 }

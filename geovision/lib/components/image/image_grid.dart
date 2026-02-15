@@ -2,7 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
-import '../pages/image_view.dart';
+import '../../pages/image_view.dart';
 import 'gradient_card_overlay.dart';
 
 class SliverImageGrid extends StatelessWidget {

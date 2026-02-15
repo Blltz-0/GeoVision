@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../components/class_creator.dart';
-import '../functions/metadata_handle.dart';
+import '../components/classes/class_creator.dart';
+import '../functions/data_service/metadata_handle.dart';
 
 class ManageClassesPage extends StatefulWidget {
   final String projectName;

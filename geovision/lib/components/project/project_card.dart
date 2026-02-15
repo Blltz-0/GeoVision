@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../pages/project_container.dart';
-import '../functions/metadata_handle.dart';
+import '../../pages/project_container.dart';
+import '../../functions/data_service/metadata_handle.dart';
 
 class ProjectCard extends StatelessWidget {
   final String title;

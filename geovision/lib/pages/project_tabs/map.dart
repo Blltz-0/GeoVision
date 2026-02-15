@@ -6,7 +6,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:flutter_map_heatmap/flutter_map_heatmap.dart';
 import 'package:geocoding/geocoding.dart';
 
-import '../../components/class_selector_dropdown.dart';
+import '../../components/classes/class_selector_dropdown.dart';
 
 // --- HELPER WIDGET: DISPLAYS ADDRESS OR LAT/LNG ---
 class LocationDisplay extends StatefulWidget {
@@ -43,40 +43,35 @@ class _LocationDisplayState extends State<LocationDisplay> {
   }
 
   Future<void> _resolveAddress() async {
+    if (!mounted) return;
     if (widget.latitude == 0.0 && widget.longitude == 0.0) {
-      if (mounted) setState(() => _displayText = "No GPS Data");
+      setState(() => _displayText = "No GPS Data");
       return;
     }
 
+    // Show coordinates while loading
     String latLngString = "${widget.latitude.toStringAsFixed(5)}, ${widget.longitude.toStringAsFixed(5)}";
-    if (mounted) setState(() => _displayText = latLngString);
+    setState(() => _displayText = "Resolving... ($latLngString)");
 
     try {
       List<Placemark> placemarks = await placemarkFromCoordinates(widget.latitude, widget.longitude);
 
       if (placemarks.isNotEmpty && mounted) {
         Placemark place = placemarks[0];
-        String part1 = place.locality ?? "";
-        String part2 = place.administrativeArea ?? "";
+        String part1 = place.locality ?? ""; // City
+        String part2 = place.administrativeArea ?? ""; // State/Province
         String part3 = place.country ?? "";
 
-        String finalName = "";
-        if (part1.isNotEmpty && part2.isNotEmpty) {
-          finalName = "$part1, $part2";
-        } else if (part1.isNotEmpty) {
-          finalName = "$part1, $part3";
-        } else if (part2.isNotEmpty) {
-          finalName = "$part2, $part3";
-        } else {
-          finalName = part3;
-        }
+        // Intelligent formatting
+        List<String> parts = [part1, part2, part3].where((s) => s.isNotEmpty).toList();
+        String finalName = parts.take(2).join(", "); // Take first 2 available parts
 
-        if (finalName.trim().isEmpty || finalName.trim() == ",") finalName = "Unknown Location";
+        if (finalName.trim().isEmpty) finalName = latLngString;
 
         setState(() => _displayText = finalName);
       }
     } catch (e) {
-      // Keep showing Lat/Lng on error
+      if (mounted) setState(() => _displayText = latLngString);
     }
   }
 
@@ -123,7 +118,7 @@ class _MapPageState extends State<MapPage> {
   // Filter State
   DateTimeRange? _selectedDateRange;
   String _filterClass = "All";
-  int _heatmapKey = 0;
+  int _heatmapKey = 0; // Forces heatmap rebuild when data changes
 
   @override
   void initState() {
@@ -135,6 +130,7 @@ class _MapPageState extends State<MapPage> {
   @override
   void didUpdateWidget(MapPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // Only re-filter if the data reference actually changed
     if (widget.mapData != oldWidget.mapData) {
       _filterMarkers();
     }
@@ -145,29 +141,45 @@ class _MapPageState extends State<MapPage> {
     List<WeightedLatLng> heatmapPoints = [];
 
     for (var point in widget.mapData) {
+      // Safety Checks
       double lat = (point['lat'] as num?)?.toDouble() ?? 0.0;
       double lng = (point['lng'] as num?)?.toDouble() ?? 0.0;
       String pointClass = point['class'] ?? "Unclassified";
       String timeStr = point['time'] ?? "";
 
+      // Skip invalid coordinates
       if (lat == 0.0 && lng == 0.0) continue;
+      if (lat.abs() > 90 || lng.abs() > 180) continue;
 
       // 1. DATE FILTER
       if (_selectedDateRange != null && timeStr.isNotEmpty) {
         try {
           DateTime pointDate = DateTime.parse(timeStr).toLocal();
-          // Set start to beginning of day, end to very end of day
+
+          // Normalize range to include full days
           DateTime start = DateTime(_selectedDateRange!.start.year, _selectedDateRange!.start.month, _selectedDateRange!.start.day);
           DateTime end = DateTime(_selectedDateRange!.end.year, _selectedDateRange!.end.month, _selectedDateRange!.end.day, 23, 59, 59);
 
           if (pointDate.isBefore(start) || pointDate.isAfter(end)) continue;
-        } catch (_) {}
+        } catch (_) {
+          continue; // Skip if date is malformed
+        }
       }
 
       // 2. CLASS FILTER
       if (_filterClass != "All" && pointClass != _filterClass) continue;
 
       // 3. CREATE MARKER
+      // Get class color
+      Color markerColor = Colors.red;
+      if (widget.projectType == 'classification') {
+        final classDef = widget.projectClasses.firstWhere(
+                (c) => c['name'] == pointClass,
+            orElse: () => {'color': Colors.red.value}
+        );
+        markerColor = Color(classDef['color']);
+      }
+
       filteredMarkers.add(
         Marker(
           point: LatLng(lat, lng),
@@ -175,7 +187,7 @@ class _MapPageState extends State<MapPage> {
           height: 40,
           child: GestureDetector(
             onTap: () => _showImageDialog(point),
-            child: const Icon(Icons.location_on, color: Colors.red, size: 40),
+            child: Icon(Icons.location_on, color: markerColor, size: 40),
           ),
         ),
       );
@@ -187,7 +199,7 @@ class _MapPageState extends State<MapPage> {
     setState(() {
       _markers = filteredMarkers;
       _heatmapData = heatmapPoints;
-      _heatmapKey++;
+      _heatmapKey++; // Force update
     });
   }
 
@@ -207,30 +219,25 @@ class _MapPageState extends State<MapPage> {
 
       if (mounted) {
         setState(() => _currentLocation = newLocation);
-        _mapController.move(newLocation, 16.0);
+        _mapController.move(newLocation, 15.0);
       }
     } catch (e) {
       debugPrint("Location Error: $e");
     }
   }
 
-  // --- UPDATED DIALOG: SHOWS DETAILS ---
+  // --- IMAGE DETAIL DIALOG ---
   void _showImageDialog(Map<String, dynamic> pointData) {
     String path = pointData['path'] ?? "";
     String className = pointData['class'] ?? "Unclassified";
-
-    // --- GEOJSON COMPATIBILITY FIX ---
     double lat = (pointData['lat'] as num?)?.toDouble() ?? 0.0;
     double lng = (pointData['lng'] as num?)?.toDouble() ?? 0.0;
-    // ---------------------------------
-
     String filename = path.split(Platform.pathSeparator).last;
 
-    // Parse Date
     String dateString = "Unknown Date";
     if (pointData['time'] != null) {
       try {
-        final dt = DateTime.parse(pointData['time']);
+        final dt = DateTime.parse(pointData['time']).toLocal();
         dateString = "${dt.year}-${dt.month}-${dt.day} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}";
       } catch (_) {}
     }
@@ -243,59 +250,56 @@ class _MapPageState extends State<MapPage> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // 1. IMAGE AREA
-            ClipRRect(
-              borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
-              child: Container(
-                height: 250,
-                color: Colors.black12,
-                child: File(path).existsSync()
-                    ? Image.file(File(path), fit: BoxFit.cover)
-                    : const Center(child: Icon(Icons.broken_image, color: Colors.grey)),
-              ),
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(15)),
+                  child: Container(
+                    height: 250,
+                    width: double.infinity,
+                    color: Colors.black12,
+                    child: File(path).existsSync()
+                        ? Image.file(File(path), fit: BoxFit.cover)
+                        : const Center(child: Icon(Icons.broken_image, color: Colors.grey, size: 50)),
+                  ),
+                ),
+                Positioned(
+                  right: 5, top: 5,
+                  child: CircleAvatar(
+                    backgroundColor: Colors.black54,
+                    child: IconButton(
+                      icon: const Icon(Icons.close, color: Colors.white, size: 20),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ),
+                ),
+              ],
             ),
-
-            // 2. INFO AREA
             Padding(
-              padding: const EdgeInsets.all(15.0),
+              padding: const EdgeInsets.all(16.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(filename, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                  const SizedBox(height: 10),
-
-                  // Class Row
-                  if (widget.projectType == "classification")
-                    Row(
-                      children: [
-                        const Icon(Icons.label, size: 16, color: Colors.blue),
-                        const SizedBox(width: 8),
-                        Text("Class: $className", style: const TextStyle(fontSize: 14)),
-                      ],
-                    ),
-                  const SizedBox(height: 5),
-
-                  // Date Row
-                  Row(
-                    children: [
-                      const Icon(Icons.calendar_today, size: 16, color: Colors.blue),
-                      const SizedBox(width: 8),
-                      Text(dateString, style: const TextStyle(fontSize: 14)),
-                    ],
-                  ),
-                  const SizedBox(height: 5),
-
-                  // Location Row (Using the Helper Widget)
+                  const Divider(),
+                  if (widget.projectType == "classification") ...[
+                    _buildInfoRow(Icons.label, "Class", className),
+                    const SizedBox(height: 8),
+                  ],
+                  _buildInfoRow(Icons.calendar_today, "Date", dateString),
+                  const SizedBox(height: 8),
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.location_on, size: 16, color: Colors.red),
+                      const Icon(Icons.location_on, size: 18, color: Colors.grey),
                       const SizedBox(width: 8),
                       Expanded(
-                        child: LocationDisplay(
-                            latitude: lat,
-                            longitude: lng,
-                            style: const TextStyle(fontSize: 14)
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text("Location:", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.grey)),
+                            LocationDisplay(latitude: lat, longitude: lng, style: const TextStyle(fontSize: 14)),
+                          ],
                         ),
                       ),
                     ],
@@ -303,64 +307,63 @@ class _MapPageState extends State<MapPage> {
                 ],
               ),
             ),
-
-            // 3. CLOSE BUTTON
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text("Close"),
-            ),
-            const SizedBox(height: 5),
           ],
         ),
       ),
     );
   }
 
-  Future<void> _pickDateRange() async {
-    // 1. Helper: Force ANY DateTime into a pure YYYY-MM-DD string regardless of timezone
-    String toNormalKey(DateTime dt) {
-      // Using toLocal() ensures we match the user's current calendar view
-      final local = dt.toLocal();
-      return "${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}";
-    }
+  Widget _buildInfoRow(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, size: 18, color: Colors.grey),
+        const SizedBox(width: 8),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold)),
+            Text(value, style: const TextStyle(fontSize: 14)),
+          ],
+        ),
+      ],
+    );
+  }
 
-    // 2. Build the available dates set (Ignore Class filtering here for safety)
-    final Set<String> availableDates = widget.mapData
-        .where((point) => point['time'] != null && point['time'].toString().isNotEmpty)
-        .map((point) {
+  // --- DATE PICKER LOGIC ---
+  Future<void> _pickDateRange() async {
+    // 1. CONVERT DATA: Extract unique "YYYY-MM-DD" strings from GeoJSON
+    final Set<String> validDates = widget.mapData
+        .map((point) => point['time']?.toString()) // Extract time strings
+        .where((time) => time != null && time.isNotEmpty) // Remove nulls
+        .map((time) {
       try {
-        // 1. Parse the date
-        DateTime dt = DateTime.parse(point['time'].toString());
-        // 2. Force to Local before turning into a string key
-        DateTime local = dt.toLocal();
-        return "${local.year}-${local.month.toString().padLeft(2, '0')}-${local.day.toString().padLeft(2, '0')}";
-      } catch (e) {
+        final dt = DateTime.parse(time!).toLocal();
+        return "${dt.year}-${dt.month.toString().padLeft(2, '0')}-${dt.day.toString().padLeft(2, '0')}";
+      } catch (_) {
         return null;
       }
     })
-        .whereType<String>()
+        .whereType<String>() // Remove failed parses
         .toSet();
 
-    // console check: copy-paste these into a notepad to verify they look like "2026-02-08"
-    debugPrint("🟢 Unlocking these dates: $availableDates");
+    debugPrint("📅 Valid Dates Found: ${validDates.length}");
 
-    DateTimeRange? newRange = await showDateRangePicker(
+    bool isDaySelectable(DateTime day) {
+      if (validDates.isEmpty) return true; // If no data, allow all
+
+      final String key = "${day.year}-${day.month.toString().padLeft(2, '0')}-${day.day.toString().padLeft(2, '0')}";
+      return validDates.contains(key);
+    }
+
+    // 3. SHOW PICKER
+    final DateTimeRange? newRange = await showDateRangePicker(
       context: context,
-      firstDate: DateTime(2010),
-      lastDate: DateTime(2030),
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
       initialDateRange: _selectedDateRange,
 
-      // The 3-parameter signature your specific Flutter version requires
-      selectableDayPredicate: availableDates.isEmpty
-          ? null
-          : (DateTime day, DateTime? start, DateTime? end) {
-        final String key = toNormalKey(day);
-        final bool isAvailable = availableDates.contains(key);
-
-        // Use this to debug in real-time if a specific date stays locked
-        // debugPrint("Checking $key : $isAvailable");
-
-        return isAvailable;
+      selectableDayPredicate: (DateTime day, DateTime? start, DateTime? end) {
+        return isDaySelectable(day);
       },
 
       builder: (context, child) {
@@ -384,23 +387,26 @@ class _MapPageState extends State<MapPage> {
   }
 
   Widget _buildDateButton({required String label, required String text, required VoidCallback onTap}) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        height: 50,
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(30),
-          boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))],
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 15),
-        child: Column(
+    return Material(
+      color: Colors.white,
+      elevation: 2,
+      borderRadius: BorderRadius.circular(8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          height: 50,
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          alignment: Alignment.centerLeft,
+          child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Text(label, style: const TextStyle(fontSize: 10, color: Colors.grey)),
-              Text(text, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-            ]
+              Text(label.toUpperCase(), style: const TextStyle(fontSize: 10, color: Colors.grey, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 2),
+              Text(text, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis),
+            ],
+          ),
         ),
       ),
     );
@@ -408,6 +414,12 @@ class _MapPageState extends State<MapPage> {
 
   @override
   Widget build(BuildContext context) {
+    // Count stats
+    int count = _markers.length;
+    String statusText = _showHeatmap
+        ? "Heatmap ($count points)"
+        : "$count Marker${count != 1 ? 's' : ''}";
+
     return Scaffold(
       body: Stack(
         children: [
@@ -415,7 +427,10 @@ class _MapPageState extends State<MapPage> {
             mapController: _mapController,
             options: MapOptions(
               initialCenter: _currentLocation ?? const LatLng(16.6159, 120.3209),
-              initialZoom: 14.0,
+              initialZoom: 13.0,
+              interactionOptions: const InteractionOptions(
+                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
+              ),
             ),
             children: [
               TileLayer(
@@ -424,112 +439,136 @@ class _MapPageState extends State<MapPage> {
               ),
               if (_showHeatmap && _heatmapData.isNotEmpty)
                 HeatMapLayer(
-                  key: ValueKey(_heatmapKey),
+                  key: ValueKey("heatmap_$_heatmapKey"), // Unique key forces rebuild on data change
                   heatMapDataSource: InMemoryHeatMapDataSource(data: _heatmapData),
                   heatMapOptions: HeatMapOptions(
-                    radius: 50,
-                    minOpacity: 0.1,
-                    gradient: {0.2: Colors.blue, 0.5: Colors.green, 1.0: Colors.red},
+                    radius: 35,
+                    minOpacity: 0.2,
+                    gradient: {
+                      0.2: Colors.blue,
+                      0.5: Colors.lime,
+                      0.8: Colors.orange,
+                      1.0: Colors.red
+                    },
                   ),
-                )
-              else if (!_showHeatmap)
+                ),
+              if (!_showHeatmap)
                 MarkerLayer(markers: _markers),
             ],
           ),
 
-          // --- OVERLAYS ---
+          // --- TOP CONTROLS ---
           Positioned(
             top: 0, left: 0, right: 0,
             child: SafeArea(
               child: Padding(
-                padding: const EdgeInsets.all(15.0),
-                child: Row(
+                padding: const EdgeInsets.all(12.0),
+                child: Column(
                   children: [
-                    Expanded(child: _buildDateButton(
-                        label: "From",
-                        text: _selectedDateRange == null ? "Start" : "${_selectedDateRange!.start.month}/${_selectedDateRange!.start.day}",
-                        onTap: _pickDateRange
-                    )),
-                    const SizedBox(width: 10),
-                    Expanded(child: _buildDateButton(
-                        label: "To",
-                        text: _selectedDateRange == null ? "End" : "${_selectedDateRange!.end.month}/${_selectedDateRange!.end.day}",
-                        onTap: _pickDateRange
-                    )),
-                    if(_selectedDateRange != null)
-                      Padding(
-                        padding: const EdgeInsets.only(left: 10),
-                        child: GestureDetector(
-                          onTap: (){ setState(() => _selectedDateRange = null); _filterMarkers(); },
-                          child: Container(
-                            height: 45, width: 45, decoration: const BoxDecoration(color: Colors.red, shape: BoxShape.circle),
-                            child: const Icon(Icons.close, color: Colors.white),
-                          ),
+                    // DATE FILTER BAR
+                    Row(
+                      children: [
+                        Expanded(child: _buildDateButton(
+                            label: "Start Date",
+
+                            text: _selectedDateRange == null ? "Any" : "${_selectedDateRange!.start.month}/${_selectedDateRange!.start.day}/${_selectedDateRange!.start.year}",
+                            onTap: _pickDateRange
+                        )),
+                        const SizedBox(width: 8),
+                        Expanded(child: _buildDateButton(
+                            label: "End Date",
+                            text: _selectedDateRange == null ? "Any" : "${_selectedDateRange!.end.month}/${_selectedDateRange!.end.day}/${_selectedDateRange!.end.year}",
+                            onTap: _pickDateRange
+                        )),
+                        if(_selectedDateRange != null)
+                          Padding(
+                            padding: const EdgeInsets.only(left: 8),
+                            child: CircleAvatar(
+                              backgroundColor: Colors.red.shade100,
+                              child: IconButton(
+                                icon: const Icon(Icons.close, color: Colors.red),
+                                onPressed: (){ setState(() => _selectedDateRange = null); _filterMarkers(); },
+                              ),
+                            ),
+                          )
+                      ],
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    // CLASS FILTER (If Classification)
+                    if (widget.projectType == 'classification')
+                      Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 4)],
                         ),
-                      )
+                        child: ClassSelectorDropdown(
+                          projectName: widget.projectName,
+                          selectedClass: _filterClass,
+                          classes: widget.projectClasses,
+                          onClassAdded: widget.onClassesUpdated,
+                          onClassSelected: (String newClass) {
+                            setState(() => _filterClass = newClass);
+                            _filterMarkers();
+                          },
+                        ),
+                      ),
                   ],
                 ),
               ),
             ),
           ),
 
-          // --- CLASS SELECTOR DROPDOWN (ONLY FOR CLASSIFICATION) ---
-          if (widget.projectType == 'classification')
-            Positioned(
-              top: 80, left: 0, right: 0,
-              child: ClassSelectorDropdown(
-                projectName: widget.projectName,
-                selectedClass: _filterClass,
-                classes: widget.projectClasses,
-                onClassAdded: widget.onClassesUpdated,
-                onClassSelected: (String newClass) {
-                  setState(() => _filterClass = newClass);
-                  _filterMarkers();
-                },
+          // --- STATUS CHIP ---
+          Positioned(
+            bottom: 90,
+            left: 20,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(20),
+                boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+              ),
+              child: Text(
+                  statusText,
+                  style: const TextStyle(fontWeight: FontWeight.bold)
               ),
             ),
+          ),
 
-          // --- EMPTY STATE INDICATOR ---
+          // --- EMPTY STATE ---
           if (_markers.isEmpty && _heatmapData.isEmpty)
-            Positioned(
-              bottom: 100,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(
-                      color: Colors.black54,
-                      borderRadius: BorderRadius.circular(20)
-                  ),
-                  child: const Text(
-                    "No images found for this date/class",
-                    style: TextStyle(color: Colors.white),
-                  ),
+            Center(
+              child: Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.9),
+                    borderRadius: BorderRadius.circular(16)
+                ),
+                child: const Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.filter_alt_off, size: 48, color: Colors.grey),
+                    SizedBox(height: 10),
+                    Text("No images match filters", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.grey)),
+                  ],
                 ),
               ),
-            )
+            ),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'fab_map',
-        shape: const StadiumBorder(),
+        heroTag: 'fab_map_toggle',
         backgroundColor: Colors.white,
-        label: Text(_showHeatmap ? "Show Markers" : "Show Heatmap"),
-        icon: Icon(_showHeatmap ? Icons.location_on : Icons.blur_on, color: _showHeatmap ? Colors.red : Colors.orange),
+        foregroundColor: Colors.black87,
+        elevation: 4,
+        icon: Icon(_showHeatmap ? Icons.pin_drop : Icons.blur_on, color: _showHeatmap ? Colors.red : Colors.orange),
+        label: Text(_showHeatmap ? "Show Markers" : "Heatmap"),
         onPressed: () {
           setState(() => _showHeatmap = !_showHeatmap);
-          ScaffoldMessenger.of(context).clearSnackBars();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              duration: const Duration(milliseconds: 700),
-              content: Text(_showHeatmap ? "Showing Heatmap" : "Showing Markers"),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(10),
-              ),
-            ),
-          );
         },
       ),
     );

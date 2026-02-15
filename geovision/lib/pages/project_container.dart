@@ -9,7 +9,7 @@ import 'package:geovision/pages/project_tabs/camera.dart';
 import 'package:geovision/pages/project_tabs/images.dart';
 import 'package:geovision/pages/project_tabs/map.dart';
 import '../functions/data_service/export_service.dart';
-import '../functions/metadata_handle.dart';
+import '../functions/data_service/metadata_handle.dart';
 import 'manage_labels_page.dart';
 import 'annotation_page.dart';
 
@@ -52,7 +52,6 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
     //_synchronizeData(); !!!!Only Used when Manually Adding Images to Project Folder!!!!!!!!!!!
   }
 
-  // --- NEW METHOD: FORCE UPDATE LAST OPENED ---
   Future<void> _updateLastOpened() async {
     try {
       final docDir = await getApplicationDocumentsDirectory();
@@ -299,21 +298,61 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
   }
 
   Future<void> _handleExport() async {
-    setState(() => _isExporting = true);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        duration: const Duration(milliseconds: 1000),
-        content: const Text("Exporting the Project..."),
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
+    final token = ExportCancellationToken();
+
+    // 1. Show the non-dismissible dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => PopScope(
+        canPop: false, // Disables the casual back button
+        child: AlertDialog(
+          title: const Text("Exporting Project"),
+          content: const Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 20),
+              Text("Please wait, this may take a moment for large projects."),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                token.cancel();
+                Navigator.pop(context);
+                ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("Export Cancelled"))
+                );
+              },
+              child: const Text("Cancel Export", style: TextStyle(color: Colors.red)),
+            ),
+          ],
         ),
       ),
     );
-    await ExportService.exportProject(widget.projectName);
-    if (mounted) {
-      setState(() => _isExporting = false);
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+    try {
+      setState(() => _isExporting = true);
+
+      // 2. Start Export
+      await ExportService.exportProject(widget.projectName, token: token);
+
+    } catch (e) {
+      debugPrint("Export Failed: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Export Failed: $e"), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isExporting = false);
+        // 3. Close the dialog automatically if it's still open
+        if (Navigator.canPop(context)) {
+          Navigator.pop(context);
+        }
+      }
     }
   }
 
