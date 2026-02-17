@@ -295,7 +295,7 @@ class _ImagesPageState extends State<ImagesPage> {
     await ImageMetadata.saveUploadHistory(widget.projectName, history);
 
     if (mounted) {
-      setState(() { _isUploading = false; });
+      setState(() { _isUploading = false; _tempUploadedImages.clear();});
       widget.onDataChanged?.call();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text("Imported $_currentUploadCount images.")),

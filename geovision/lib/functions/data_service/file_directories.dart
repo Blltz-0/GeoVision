@@ -24,4 +24,9 @@ class FileDirectories{
     final appDir = await getApplicationDocumentsDirectory();
     return File('${appDir.path}/projects/$projectName/labels.json');
   }
+
+  static Future<File> getUploadHistoryFile(String projectName) async {
+    final appDir = await getApplicationDocumentsDirectory();
+    return File('${appDir.path}/projects/$projectName/upload_history.json');
+  }
 }

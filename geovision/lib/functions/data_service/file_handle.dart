@@ -1,17 +1,37 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:geovision/functions/data_service/file_directories.dart';
 import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import '../image/image_metadata.dart';
 import 'metadata_exif.dart';
 import 'metadata_geojson.dart';
 
 class MetadataFiles {
-  static Future<void> deleteImage({required String projectName, required String imagePath, String projectType = 'classification'}) async {
+  static Future<void> deleteImage({
+    required String projectName,
+    required String imagePath,
+    String projectType = 'classification'
+  }) async {
     final File imageFile = File(imagePath);
     if (await imageFile.exists()) await imageFile.delete();
 
     final filename = p.basename(imagePath);
     await MetadataGeoJson.removeEntry(projectName, filename);
+
+    try {
+      final historyFile = await FileDirectories.getUploadHistoryFile(projectName); // Using helper
+      if (await historyFile.exists()) {
+        final Map<String, dynamic> historyMap = jsonDecode(await historyFile.readAsString());
+        if (historyMap.containsKey(filename)) {
+          historyMap.remove(filename);
+          await historyFile.writeAsString(jsonEncode(historyMap));
+        }
+      }
+    } catch (e) {
+      debugPrint("Error updating upload_history.json: $e");
+    }
   }
 
   static Future<int> getLatestIndex(
@@ -106,9 +126,9 @@ class MetadataFiles {
     try {
       String cleanProject = projectName.replaceAll(RegExp(r'[^\w\s]+'), '').replaceAll(' ', '_');
       String cleanClass = newClassName.replaceAll(RegExp(r'[^\w\s]+'), '').replaceAll(' ', '_');
-      String currentFilename = p.basename(oldImagePath);
+      String oldFilename = p.basename(oldImagePath);
 
-      if (currentFilename.startsWith("${cleanProject}_${cleanClass}_")) {
+      if (oldFilename.startsWith("${cleanProject}_${cleanClass}_")) {
         // Just update metadata
         await MetadataGeoJson.updateClassInCsv(projectName: projectName, imagePath: oldImagePath, newClassName: newClassName);
         await MetadataExif.embedMetadata(filePath: oldImagePath, lat: 0, lng: 0, className: newClassName, updateClassOnly: true);
@@ -118,19 +138,79 @@ class MetadataFiles {
       String newFileName = await generateNextFileName(projectDir, projectName, newClassName, projectType: projectType);
       String newImagePath = '${projectDir.path}/$newFileName';
 
+      // 1. Rename the physical file
       await oldFile.rename(newImagePath);
 
-      // We must save the new entry to GeoJSON manually or rebuild.
-      // Rebuild is safer to keep things in sync.
-      await MetadataGeoJson.rebuildProjectData(projectName, projectType: projectType);
+      // 2. Update upload_history.json ONLY if the file was an upload (exists in history)
+      try {
+        final historyFile = await FileDirectories.getUploadHistoryFile(projectName);
+        if (await historyFile.exists()) {
+          final Map<String, dynamic> historyMap = jsonDecode(await historyFile.readAsString());
+          if (historyMap.containsKey(oldFilename)) {
+            historyMap[newFileName] = historyMap[oldFilename];
+            historyMap.remove(oldFilename);
+            await historyFile.writeAsString(jsonEncode(historyMap));
+          }
+        }
+      } catch (e) {
+        debugPrint("Error syncing history: $e");
+      }
 
-      // Re-embed metadata on new file
+      await MetadataGeoJson.updateClassInCsv(
+        projectName: projectName,
+        imagePath: oldImagePath,   // Look for this name
+        newImagePath: newImagePath, // Replace with this path
+        newClassName: newClassName,
+      );
+
+      // 3. Rebuild Project Data & Embed Metadata
+      await MetadataGeoJson.rebuildProjectData(projectName, projectType: projectType);
       await MetadataExif.embedMetadata(filePath: newImagePath, lat: 0, lng: 0, className: newClassName, updateClassOnly: true);
 
       return newImagePath;
     } catch (e) {
       debugPrint("❌ Error tagging image: $e");
       return null;
+    }
+  }
+
+  static Future<File> _getHistoryFile(String projectName) async {
+    final appDir = await getApplicationDocumentsDirectory();
+    return File('${appDir.path}/projects/$projectName/upload_history.json');
+  }
+
+  // Called when an image is deleted
+  static Future<void> removeHistory(String projectName, String filename) async {
+    try {
+      final file = await _getHistoryFile(projectName);
+      if (!await file.exists()) return;
+
+      final Map<String, dynamic> history = jsonDecode(await file.readAsString());
+      if (history.containsKey(filename)) {
+        history.remove(filename);
+        await file.writeAsString(jsonEncode(history));
+        debugPrint("History: Removed $filename");
+      }
+    } catch (e) {
+      debugPrint("Error removing from history: $e");
+    }
+  }
+
+  // Called when an image is retagged (renamed)
+  static Future<void> renameHistory(String projectName, String oldName, String newName) async {
+    try {
+      final file = await _getHistoryFile(projectName);
+      if (!await file.exists()) return;
+
+      final Map<String, dynamic> history = jsonDecode(await file.readAsString());
+      if (history.containsKey(oldName)) {
+        history[newName] = history[oldName];
+        history.remove(oldName);
+        await file.writeAsString(jsonEncode(history));
+        debugPrint("History: Renamed $oldName to $newName");
+      }
+    } catch (e) {
+      debugPrint("Error renaming in history: $e");
     }
   }
 }

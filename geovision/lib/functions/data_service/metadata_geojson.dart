@@ -130,6 +130,37 @@ class MetadataGeoJson {
     debugPrint("✅ GeoJSON Database Rebuilt (Preserved ${existingData.length} records) for $projectName");
   }
 
+  static Future<void> updateEntryAfterRename({
+    required String projectName,
+    required String oldName,
+    required String newName,
+    required String newPath,
+    required String newClass,
+  }) async {
+    final geoFile = await FileDirectories.getGeoJsonFile(projectName);
+    if (!await geoFile.exists()) return;
+
+    try {
+      final Map<String, dynamic> geoJson = jsonDecode(await geoFile.readAsString());
+      final List features = geoJson['features'];
+
+      for (var feature in features) {
+        String path = feature['properties']['path'] ?? "";
+        if (path.endsWith(oldName)) {
+          // Update the metadata to reflect the new state
+          feature['properties']['path'] = newPath;
+          feature['properties']['class'] = newClass;
+          // The coordinates and original 'time' remain untouched and safe!
+          break;
+        }
+      }
+
+      await geoFile.writeAsString(jsonEncode(geoJson));
+    } catch (e) {
+      debugPrint("Error updating GeoJSON entry: $e");
+    }
+  }
+
   // --- 2. SAVE TO DATABASE (Append/Update GeoJSON) ---
   static Future<void> saveToCsv({
     required String projectName,
@@ -245,10 +276,10 @@ class MetadataGeoJson {
     }
   }
 
-  // --- 6. UPDATE SINGLE CLASS ---
   static Future<void> updateClassInCsv({
     required String projectName,
     required String imagePath,
+    String? newImagePath,
     required String newClassName,
   }) async {
     final geoFile = await FileDirectories.getGeoJsonFile(projectName);
@@ -262,6 +293,9 @@ class MetadataGeoJson {
         String fName = p.basename(f['properties']['path'] ?? "");
         if (fName == filename) {
           f['properties']['class'] = newClassName;
+          if (newImagePath != null) {
+            f['properties']['path'] = newImagePath;
+          }
         }
       }
       await geoFile.writeAsString(jsonEncode(geoJson));
