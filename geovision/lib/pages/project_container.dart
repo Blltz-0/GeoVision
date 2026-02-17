@@ -1,17 +1,16 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:device_info_plus/device_info_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:geovision/pages/manage_classes_page.dart';
 import 'package:geovision/pages/project_tabs/project_settings.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:native_exif/native_exif.dart';
 import 'package:geovision/pages/project_tabs/camera.dart';
 import 'package:geovision/pages/project_tabs/images.dart';
 import 'package:geovision/pages/project_tabs/map.dart';
-import 'package:permission_handler/permission_handler.dart';
 import 'package:share_plus/share_plus.dart';
 import '../functions/data_service/export_service.dart';
 import '../functions/data_service/metadata_handle.dart';
@@ -204,7 +203,7 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
       Map<String, String> newLabelMap = {};
 
       for (File file in filesOnDisk) {
-        String filename = file.path.split(Platform.pathSeparator).last;
+        String filename = p.basename(file.path);
         String currentAbsolutePath = file.path;
 
         if (geoMap.containsKey(filename)) {
@@ -231,7 +230,7 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
           String defaultClass = _projectType == 'segmentation' ? '' : 'Unclassified';
 
           Map<String, dynamic> newRow = {
-            'path': currentAbsolutePath,
+            'path': filename,
             'class': defaultClass,
             'lat': lat,
             'lng': lng,
@@ -277,7 +276,7 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
             ]
           },
           "properties": {
-            "path": row['path'],
+            "name": p.basename(row['path']),
             "class": row['class'],
             "time": row['time'],
           }

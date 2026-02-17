@@ -4,7 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:geovision/functions/data_service/file_directories.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import '../image/image_metadata.dart';
 import 'metadata_exif.dart';
 import 'metadata_geojson.dart';
 
@@ -81,7 +80,9 @@ class MetadataFiles {
         }
       }
     } catch (e) {
-      print("Error scanning directory index: $e");
+      if (kDebugMode) {
+        print("Error scanning directory index: $e");
+      }
     }
 
     return maxCount;
@@ -136,7 +137,7 @@ class MetadataFiles {
       }
 
       String newFileName = await generateNextFileName(projectDir, projectName, newClassName, projectType: projectType);
-      String newImagePath = '${projectDir.path}/$newFileName';
+      String newImagePath = p.join(projectDir.path, newFileName);
 
       // 1. Rename the physical file
       await oldFile.rename(newImagePath);
@@ -158,8 +159,8 @@ class MetadataFiles {
 
       await MetadataGeoJson.updateClassInCsv(
         projectName: projectName,
-        imagePath: oldImagePath,   // Look for this name
-        newImagePath: newImagePath, // Replace with this path
+        imagePath: oldImagePath,
+        newImagePath: newFileName,
         newClassName: newClassName,
       );
 

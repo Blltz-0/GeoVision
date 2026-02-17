@@ -7,6 +7,7 @@ import 'package:flutter_map_heatmap/flutter_map_heatmap.dart';
 import 'package:geocoding/geocoding.dart';
 import 'dart:ui';
 import 'package:flutter/rendering.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'dart:typed_data';
@@ -235,14 +236,17 @@ class _MapPageState extends State<MapPage> {
 
   // --- IMAGE DETAIL DIALOG ---
   void _showImageDialog(Map<String, dynamic> pointData) {
+    // This 'path' is already reconstructed to the full system path by the Service
     String path = pointData['path'] ?? "";
     String className = pointData['class'] ?? "Unclassified";
     double lat = (pointData['lat'] as num?)?.toDouble() ?? 0.0;
     double lng = (pointData['lng'] as num?)?.toDouble() ?? 0.0;
-    String filename = path.split(Platform.pathSeparator).last;
+
+    // We get the filename just for the UI display
+    String filename = p.basename(path);
 
     String dateString = "Unknown Date";
-    if (pointData['time'] != null) {
+    if (pointData['time'] != null && pointData['time'].toString().isNotEmpty) {
       try {
         final dt = DateTime.parse(pointData['time']).toLocal();
         dateString = "${dt.year}-${dt.month}-${dt.day} ${dt.hour}:${dt.minute.toString().padLeft(2, '0')}";
@@ -266,7 +270,12 @@ class _MapPageState extends State<MapPage> {
                     width: double.infinity,
                     color: Colors.black12,
                     child: File(path).existsSync()
-                        ? Image.file(File(path), fit: BoxFit.cover)
+                        ? Image.file(
+                      File(path),
+                      fit: BoxFit.cover,
+                      // Adding a cache error handler is good practice
+                      errorBuilder: (context, error, stackTrace) => const Center(child: Icon(Icons.broken_image, size: 50)),
+                    )
                         : const Center(child: Icon(Icons.broken_image, color: Colors.grey, size: 50)),
                   ),
                 ),

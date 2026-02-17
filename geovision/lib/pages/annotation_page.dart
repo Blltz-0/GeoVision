@@ -180,18 +180,6 @@ class _AnnotationPageState extends State<AnnotationPage> {
     _generateThumbnail(_activeLayerIndex);
   }
 
-// Helper to define the fill area
-  List<Offset> _calculateFloodFillPath(Offset tapPoint, ui.Image reference) {
-    // If the lines are closed, this would return the internal boundary.
-    // If not closed, it returns the canvas boundary.
-    // For now, we use the image bounds to ensure it "pours over what it can".
-    return [
-      const Offset(0, 0),
-      Offset(_imageSize!.width, 0),
-      Offset(_imageSize!.width, _imageSize!.height),
-      Offset(0, _imageSize!.height),
-    ];
-  }
 
   // --- FILE MANAGEMENT ---
   Future<Directory> _getAnnotationDirectory() async {

@@ -1,13 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:archive/archive_io.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:image/image.dart' as img;
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
-
 import '../../components/annotation/annotation_layer.dart';
 import '../maps/location_clusterer.dart';
 import '../maps/map_generator.dart';
@@ -217,7 +215,6 @@ Future<Map<String, dynamic>> _processCocoDataInBackground(Map<String, dynamic> p
   final List<dynamic> geoData = params['geoData'];
   final List<dynamic> projectClasses = params['projectClasses'];
   final String projectType = params['projectType'];
-  final String imagesDirPath = params['imagesDirPath'];
   final String annotationDirPath = params['annotationDirPath'];
 
   Map<String, int> classToId = {};
@@ -241,16 +238,21 @@ Future<Map<String, dynamic>> _processCocoDataInBackground(Map<String, dynamic> p
 
   for (int i = 0; i < geoData.length; i++) {
     var row = geoData[i];
-    String originalPath = row['path'].toString();
-    String filename = originalPath.split(Platform.pathSeparator).last;
+
+    String currentPath = row['path'].toString();
+    String filename = p.basename(currentPath);
     int imageId = i + 1;
 
-    File imageFile = File(originalPath);
-    if (!imageFile.existsSync()) {
-      imageFile = File('$imagesDirPath/$filename');
-    }
-    if (!imageFile.existsSync()) continue;
+    File imageFile = File(currentPath);
 
+    // If the reconstructed path doesn't exist, we skip the entry.
+    // This prevents the exporter from crashing on missing files.
+    if (!imageFile.existsSync()) {
+      debugPrint("Skipping missing file during export: $currentPath");
+      continue;
+    }
+
+    // Read image dimensions for COCO standard
     final Uint8List bytes = imageFile.readAsBytesSync();
     final img.Image? decoded = img.decodeImage(bytes);
     if (decoded == null) continue;
@@ -269,7 +271,6 @@ Future<Map<String, dynamic>> _processCocoDataInBackground(Map<String, dynamic> p
     if (projectType == 'classification') {
       String? label = row['class']?.toString().trim();
       if (label != null && label.isNotEmpty && label.toLowerCase() != "unclassified") {
-        // Dynamic category discovery for classification
         if (!classToId.containsKey(label)) {
           classToId[label] = nextCatId;
           categories.add({"id": nextCatId, "name": label, "supercategory": "object"});
@@ -288,8 +289,8 @@ Future<Map<String, dynamic>> _processCocoDataInBackground(Map<String, dynamic> p
         });
       }
     } else {
-      // --- SEGMENTATION LOGIC ---
-      String baseName = filename.split('.').first;
+      // SEGMENTATION LOGIC
+      String baseName = p.basenameWithoutExtension(filename);
       File layerFile = File('$annotationDirPath/${baseName}_data.json');
 
       if (layerFile.existsSync()) {
@@ -300,11 +301,9 @@ Future<Map<String, dynamic>> _processCocoDataInBackground(Map<String, dynamic> p
         for (var layer in layers) {
           if (!layer.isVisible || layer.strokes.isEmpty) continue;
 
-          // CRITICAL: Pull class from the AnnotationLayer itself
           String labelName = (layer.labelName ?? "Unclassified").trim();
           if (labelName.toLowerCase() == "unclassified") continue;
 
-          // Dynamic category discovery for segmentation layers
           if (!classToId.containsKey(labelName)) {
             classToId[labelName] = nextCatId;
             categories.add({"id": nextCatId, "name": labelName, "supercategory": "object"});
@@ -313,9 +312,9 @@ Future<Map<String, dynamic>> _processCocoDataInBackground(Map<String, dynamic> p
 
           int catId = classToId[labelName]!;
 
-          // This call will still fail in an Isolate if it uses dart:ui
           final ann = await CocoConversionService.generateAnnotationForLayer(
             layer: layer,
+            // Use decoded dimensions to avoid dart:ui dependencies in Isolate
             imageSize: Size(imgWidth.toDouble(), imgHeight.toDouble()),
             imageId: imageId,
             annotationId: annotationIdCounter++,
@@ -369,7 +368,7 @@ void _zipInBackground(List<String> paths) {
       }
     }
     final encoder = ZipEncoder();
-    File(destPath).writeAsBytesSync(encoder.encode(archive)!);
+    File(destPath).writeAsBytesSync(encoder.encode(archive));
   } catch (e) {
     debugPrint("Zip Error: $e");
   }

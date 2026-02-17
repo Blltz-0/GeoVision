@@ -67,25 +67,6 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-// Ensure this helper method is defined in your _HomePageState
-  Future<void> _showPermissionExplanationDialog() async {
-    return showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text("Storage Access"),
-        content: const Text(
-            "GeoVision requires access to manage files to export your projects. "
-                "Please enable 'Allow management of all files' in the next screen."
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("OK"),
-          ),
-        ],
-      ),
-    );
-  }
 
   Future<String> _getAppPath() async {
     final appDocDir = await getApplicationDocumentsDirectory();

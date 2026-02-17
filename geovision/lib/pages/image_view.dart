@@ -69,8 +69,8 @@ class _ImageViewState extends State<ImageView> {
 
     // Build Metadata Map (Key = Lowercase Filename)
     for (var item in dataList) {
-      String rawPath = item['path']?.toString() ?? "";
-      String filename = p.basename(rawPath).toLowerCase(); // FORCE LOWERCASE
+      String fullPath = item['path']?.toString() ?? "";
+      String filename = p.basename(fullPath).toLowerCase();
       if (filename.isNotEmpty) {
         tempMap[filename] = item;
       }
