@@ -6,23 +6,25 @@ class DrawingStroke {
   final Color color;
   final double width;
   final bool isEraser;
-  final bool filled; // <-- Add this
+  final bool filled;
+  final Path? path; // <-- Add this to handle the "Bucket" geometry
 
   DrawingStroke({
     required this.points,
     required this.color,
     required this.width,
     this.isEraser = false,
-    this.filled = false, // <-- Add this
+    this.filled = false,
+    this.path, // <-- Add this
   });
 
-  // --- THE MISSING METHOD ---
   DrawingStroke copyWith({
     List<Offset>? points,
     Color? color,
     double? width,
     bool? isEraser,
     bool? filled,
+    Path? path,
   }) {
     return DrawingStroke(
       points: points ?? this.points,
@@ -30,6 +32,7 @@ class DrawingStroke {
       width: width ?? this.width,
       isEraser: isEraser ?? this.isEraser,
       filled: filled ?? this.filled,
+      path: path ?? this.path,
     );
   }
 

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -343,9 +344,14 @@ class _ImagesPageState extends State<ImagesPage> {
 
   Future<void> _pickFromGallery() async {
     if (Platform.isAndroid) {
-      if (await Permission.photos.request().isDenied &&
-          await Permission.storage.request().isDenied) {
-        return;
+      final androidInfo = await DeviceInfoPlugin().androidInfo;
+
+      if (androidInfo.version.sdkInt >= 33) {
+        // Android 13+ uses .photos
+        if (await Permission.photos.request().isDenied) return;
+      } else {
+        // Android 12 and below uses .storage
+        if (await Permission.storage.request().isDenied) return;
       }
     }
     final ImagePicker picker = ImagePicker();

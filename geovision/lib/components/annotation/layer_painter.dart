@@ -36,7 +36,6 @@ class LayerPainter extends CustomPainter {
 
     canvas.restore(); // Restore before drawing cursor (cursor is usually screen-space)
 
-    // Draw Cursor (Optional: keep this in screen space or scale it too)
     if (cursorPosition != null && currentStroke != null) {
       // For the cursor, we want it to follow the finger visually
       // We calculate the visual position manually since we popped the canvas.save()
@@ -68,6 +67,16 @@ class LayerPainter extends CustomPainter {
       paint.blendMode = BlendMode.srcOver;
     }
 
+    // Handle Bucket/Complex Paths
+    if (stroke.path != null) {
+      paint.style = PaintingStyle.fill;
+      // We draw the path directly. Since the canvas is already scaled
+      // in the paint() method, this path will shrink to fit the thumbnail.
+      canvas.drawPath(stroke.path!, paint);
+      return;
+    }
+
+    // Handle Standard Point-based Strokes
     if (stroke.points.isNotEmpty) {
       final path = Path();
       path.moveTo(stroke.points.first.dx, stroke.points.first.dy);
@@ -75,15 +84,13 @@ class LayerPainter extends CustomPainter {
         path.lineTo(stroke.points[i].dx, stroke.points[i].dy);
       }
 
-      // Check if the stroke was imported as a fillable polygon
       if (stroke.filled) {
         path.close();
-        paint.style = PaintingStyle.fill; // This fills the inside!
-        canvas.drawPath(path, paint);
+        paint.style = PaintingStyle.fill;
       } else {
-        paint.style = PaintingStyle.stroke; // Normal brush behavior
-        canvas.drawPath(path, paint);
+        paint.style = PaintingStyle.stroke;
       }
+      canvas.drawPath(path, paint);
     }
   }
 

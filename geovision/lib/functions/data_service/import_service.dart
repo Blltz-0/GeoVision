@@ -78,6 +78,22 @@ Future<bool> _backgroundImportTask(Map<String, String> params) async {
     if (readmeFile.existsSync()) {
       final content = readmeFile.readAsStringSync();
       if (content.contains("Type: Image Segmentation")) projectType = 'segmentation';
+      final authorMatch = RegExp(r"AUTHOR:\s+(.*)").firstMatch(content);
+      if (authorMatch != null) {
+        final author = authorMatch.group(1)?.trim() ?? "GeoVisionTagger";
+        await File('${dir.path}/author.txt').writeAsString(author);
+      }
+      final descMatch = RegExp(r"DESCRIPTION\s+-+\s+([\s\S]*?)\n\nDATASET INFORMATION", multiLine: true)
+          .firstMatch(content);
+      if (descMatch != null) {
+        final description = descMatch.group(1)?.trim() ?? "";
+        if (description.isNotEmpty) {
+          await File('${dir.path}/description.txt').writeAsString(description);
+        }
+      }
+
+
+
     }
     File('${dir.path}/project_type.txt').writeAsStringSync(projectType);
 
@@ -115,41 +131,51 @@ Future<bool> _backgroundImportTask(Map<String, String> params) async {
             final labelName = categoryNames[ann['category_id']] ?? "Unclassified";
             final colorInt = _getColorForName(labelName);
 
-            List seg = (ann['segmentation'] is List && ann['segmentation'].isNotEmpty) ? ann['segmentation'][0] : [];
-            List points = [];
-            for (int k = 0; k < seg.length; k += 2) {
-              points.add([(seg[k] as num).toDouble(), (seg[k + 1] as num).toDouble()]);
+// COCO 'segmentation' is a List of Lists: [[poly1], [poly2]]
+            List<dynamic> allSegments = (ann['segmentation'] is List) ? ann['segmentation'] : [];
+            List<Map<String, dynamic>> reconstructedStrokes = [];
+
+            for (var seg in allSegments) {
+              if (seg is! List) continue;
+
+              List<List<double>> points = [];
+              for (int k = 0; k < seg.length; k += 2) {
+                points.add([(seg[k] as num).toDouble(), (seg[k + 1] as num).toDouble()]);
+              }
+
+              // Polygon must be closed to render correctly as a 'fill'
+              if (points.isNotEmpty && (points.first[0] != points.last[0] || points.first[1] != points.last[1])) {
+                points.add([points.first[0], points.first[1]]);
+              }
+
+              if (points.isNotEmpty) {
+                reconstructedStrokes.add({
+                  "p": points,
+                  "c": colorInt,
+                  "w": 3.0,
+                  "e": false,
+                  "f": true // Imported COCO segments are always filled polygons
+                });
+              }
             }
 
-            // --- OPTION 1: CLOSING THE LOOP ---
-            if (points.isNotEmpty && (points.first[0] != points.last[0] || points.first[1] != points.last[1])) {
-              points.add([points.first[0], points.first[1]]);
-            }
-
-            if (points.isNotEmpty) {
+            if (reconstructedStrokes.isNotEmpty) {
               reconstructed.add({
-                "id": "${DateTime.now().toIso8601String()}_$j",
-                "name": "Layer ${j + 1}",
+                // Use a more robust unique ID to avoid collisions
+                "id": "import_${image['id']}_${ann['id']}",
+                "name": "Layer ${reconstructed.length + 1}",
                 "labelName": labelName,
                 "labelColor": colorInt,
                 "isVisible": true,
                 "isLocked": false,
-                "strokes": [
-                  {
-                    "p": points,
-                    "c": colorInt,
-                    "w": 3.0,
-                    "e": false,
-                    "f": true
-                  }
-                ]
+                "strokes": reconstructedStrokes // This now contains all disjoint parts
               });
             }
-          }
 
           if (reconstructed.isNotEmpty) {
             File('${annDir.path}/${baseName}_data.json').writeAsStringSync(jsonEncode(reconstructed));
           }
+        }
         }
       }
     }

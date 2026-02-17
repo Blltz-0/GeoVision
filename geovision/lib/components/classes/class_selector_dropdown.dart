@@ -49,7 +49,6 @@ class _ClassSelectorDropdownState extends State<ClassSelectorDropdown> {
 
     return Container(
       height: 56,
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       padding: const EdgeInsets.only(left: 16, right: 4),
       decoration: BoxDecoration(
           color: widget.showAllOption ? Colors.white : Colors.transparent,

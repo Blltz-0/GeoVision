@@ -15,7 +15,7 @@ import '../coco_converter.dart';
 import 'metadata_handle.dart';
 
 class ExportService {
-  static Future<void> exportProject(String projectName, {ExportCancellationToken? token}) async {
+  static Future<String?> exportProject(String projectName, {ExportCancellationToken? token}) async {
     List<File> tempFiles = [];
     try {
       final appDir = await getApplicationDocumentsDirectory();
@@ -25,7 +25,7 @@ class ExportService {
       final imagesDir = Directory('${sourceDir.path}/images');
       final annotationDir = Directory('${sourceDir.path}/annotation');
       final zipPath = '${tempDir.path}/${projectName}_COCO_Export.zip';
-      if (token?.isCancelled ?? false) return;
+      if (token?.isCancelled ?? false) return null;
 
       // --- 1. FETCH METADATA (Fast) ---
       final geoData = await MetadataService.readCsvData(projectName);
@@ -60,7 +60,7 @@ class ExportService {
         'annotationDirPath': annotationDir.path,
       });
 
-      if (token?.isCancelled ?? false) return;
+      if (token?.isCancelled ?? false) return null;
 
       // --- 3. CONSTRUCT & SERIALIZE JSON (Isolate) ---
       final fullCocoJson = {
@@ -92,7 +92,7 @@ class ExportService {
         'lng': (e['lng'] as num).toDouble()
       }).toList();
 
-      if (token?.isCancelled ?? false) return;
+      if (token?.isCancelled ?? false) return null;
 
       if (points.isNotEmpty) {
         final clusters = await compute(_clusterPointsInBackground, {
@@ -175,27 +175,39 @@ class ExportService {
       await readmeFile.writeAsString(readmeBuffer.toString());
       tempFiles.add(readmeFile);
 
-      // --- 6. ZIP AND SHARE ---
+      // --- 6. ZIP ---
       final File zipFile = File(zipPath);
       if (await zipFile.exists()) await zipFile.delete();
 
-      if (token?.isCancelled ?? false) return;
+      if (token?.isCancelled ?? false) return null;
 
       await compute(_zipInBackground, [sourceDir.path, zipPath]);
 
 
       if (await zipFile.exists() && await zipFile.length() > 0) {
-        await Share.shareXFiles([XFile(zipPath)], text: 'GeoVision Export: $projectName');
+        final appDir = await getApplicationDocumentsDirectory();
+        final String permanentPath = '${appDir.path}/$projectName.zip';
+
+        // This moves the file so it won't be in the temp directory cleanup anymore
+        final movedFile = await zipFile.rename(permanentPath);
+
+        return movedFile.path;
       }
+      return null;
     } catch (e, stack) {
       debugPrint("❌ EXPORT ERROR: $e");
       debugPrint(stack.toString());
       rethrow;
     } finally {
-      for (var f in tempFiles) {
-        if (await f.exists()) await f.delete();
-      }
-    }
+  for (var f in tempFiles) {
+  if (await f.exists()) {
+  // Only delete files that are NOT the zip we just created
+  if (!f.path.endsWith('.zip')) {
+  await f.delete();
+  }
+  }
+  }
+  }
   }
 }
 

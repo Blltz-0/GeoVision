@@ -1,5 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:geovision/pages/manage_classes_page.dart';
 import 'package:geovision/pages/project_tabs/project_settings.dart';
@@ -8,6 +11,8 @@ import 'package:native_exif/native_exif.dart';
 import 'package:geovision/pages/project_tabs/camera.dart';
 import 'package:geovision/pages/project_tabs/images.dart';
 import 'package:geovision/pages/project_tabs/map.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:share_plus/share_plus.dart';
 import '../functions/data_service/export_service.dart';
 import '../functions/data_service/metadata_handle.dart';
 import 'manage_labels_page.dart';
@@ -298,14 +303,15 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
   }
 
   Future<void> _handleExport() async {
+
     final token = ExportCancellationToken();
 
-    // 1. Show the non-dismissible dialog
+    // 2. Show Progress Dialog
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => PopScope(
-        canPop: false, // Disables the casual back button
+        canPop: false,
         child: AlertDialog(
           title: const Text("Exporting Project"),
           content: const Column(
@@ -313,7 +319,7 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
             children: [
               CircularProgressIndicator(),
               SizedBox(height: 20),
-              Text("Please wait, this may take a moment for large projects."),
+              Text("Building COCO Dataset & Zipping..."),
             ],
           ),
           actions: [
@@ -321,11 +327,8 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
               onPressed: () {
                 token.cancel();
                 Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text("Export Cancelled"))
-                );
               },
-              child: const Text("Cancel Export", style: TextStyle(color: Colors.red)),
+              child: const Text("Cancel", style: TextStyle(color: Colors.red)),
             ),
           ],
         ),
@@ -335,25 +338,70 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
     try {
       setState(() => _isExporting = true);
 
-      // 2. Start Export
-      await ExportService.exportProject(widget.projectName, token: token);
+      // 3. Generate ZIP in temporary storage
+      final String? tempZipPath = await ExportService.exportProject(widget.projectName, token: token);
 
+      if (mounted) Navigator.pop(context); // Close the progress dialog
+
+      if (tempZipPath != null && mounted) {
+        final File tempFile = File(tempZipPath);
+        final Uint8List fileBytes = await tempFile.readAsBytes();
+
+        // 1. User saves the file
+        String? outputFile = await FilePicker.platform.saveFile(
+          dialogTitle: 'Select where to save your export:',
+          fileName: '${widget.projectName}_COCO_Export.zip',
+          type: FileType.custom,
+          allowedExtensions: ['zip'],
+          bytes: fileBytes,
+        );
+
+        if (outputFile != null) {
+          // 2. Pass the TEMP path to the toast, not the outputFile path
+          // The tempZipPath is a real file path the app definitely has access to.
+          _showExportSuccessToast(outputFile, tempZipPath);
+        }
+      }
     } catch (e) {
-      debugPrint("Export Failed: $e");
       if (mounted) {
+        if (Navigator.canPop(context)) Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Export Failed: $e"), backgroundColor: Colors.red),
         );
       }
     } finally {
-      if (mounted) {
-        setState(() => _isExporting = false);
-        // 3. Close the dialog automatically if it's still open
-        if (Navigator.canPop(context)) {
-          Navigator.pop(context);
-        }
-      }
+      if (mounted) setState(() => _isExporting = false);
     }
+  }
+
+  void _showExportSuccessToast(String displayPath, String sharePath) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        duration: const Duration(seconds: 10),
+        backgroundColor: Colors.lightGreen[900],
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("✅ Project Saved", style: TextStyle(fontWeight: FontWeight.bold)),
+            Text(
+              "Location: $displayPath",
+              style: const TextStyle(fontSize: 10, color: Colors.white70),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
+        action: SnackBarAction(
+          label: "SHARE",
+          textColor: Colors.white,
+          onPressed: () {
+            // FIX: Use sharePath (the temp file) instead of displayPath
+            Share.shareXFiles([XFile(sharePath)], text: 'GeoVision Export: ${widget.projectName}');
+          },
+        ),
+      ),
+    );
   }
 
   void _openManageClasses() async {

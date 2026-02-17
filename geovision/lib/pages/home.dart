@@ -1,3 +1,4 @@
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'dart:io';
@@ -33,13 +34,57 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _requestInitialPermissions() async {
-    // Request Camera and Location permissions simultaneously
-    await [
-      Permission.camera,
-      Permission.location,
-      Permission.storage,
-    ].request();
+    // 1. Check current statuses first
+    PermissionStatus cameraStatus = await Permission.camera.status;
+    PermissionStatus locationStatus = await Permission.location.status;
 
+    // 2. Only show standard requests if they aren't already granted
+    // (Standard .request() doesn't show a popup if already granted,
+    // but this prevents your code from running unnecessary async tasks)
+    if (!cameraStatus.isGranted || !locationStatus.isGranted) {
+      await [
+        Permission.camera,
+        Permission.location,
+      ].request();
+    }
+
+    // 3. Handle Media/Photos for the Images Tab
+    if (Platform.isAndroid) {
+      final DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
+      final AndroidDeviceInfo androidInfo = await deviceInfo.androidInfo;
+
+      if (androidInfo.version.sdkInt >= 33) {
+        // Android 13+ specific Photos permission
+        if (!(await Permission.photos.isGranted)) {
+          await Permission.photos.request();
+        }
+      } else {
+        // Android 12 and below standard storage
+        if (!(await Permission.storage.isGranted)) {
+          await Permission.storage.request();
+        }
+      }
+    }
+  }
+
+// Ensure this helper method is defined in your _HomePageState
+  Future<void> _showPermissionExplanationDialog() async {
+    return showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Storage Access"),
+        content: const Text(
+            "GeoVision requires access to manage files to export your projects. "
+                "Please enable 'Allow management of all files' in the next screen."
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text("OK"),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<String> _getAppPath() async {

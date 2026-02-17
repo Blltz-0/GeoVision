@@ -5,8 +5,14 @@ import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_map_heatmap/flutter_map_heatmap.dart';
 import 'package:geocoding/geocoding.dart';
+import 'dart:ui';
+import 'package:flutter/rendering.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'dart:typed_data';
 
 import '../../components/classes/class_selector_dropdown.dart';
+import '../../functions/data_service/map_export_service.dart';
 
 // --- HELPER WIDGET: DISPLAYS ADDRESS OR LAT/LNG ---
 class LocationDisplay extends StatefulWidget {
@@ -109,6 +115,7 @@ class MapPage extends StatefulWidget {
 
 class _MapPageState extends State<MapPage> {
   // UI State
+  final GlobalKey _mapExportKey = GlobalKey();
   List<Marker> _markers = [];
   List<WeightedLatLng> _heatmapData = [];
   bool _showHeatmap = false;
@@ -390,13 +397,13 @@ class _MapPageState extends State<MapPage> {
     return Material(
       color: Colors.white,
       elevation: 2,
-      borderRadius: BorderRadius.circular(8),
+      borderRadius: BorderRadius.circular(25),
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(25),
         child: Container(
           height: 50,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 20),
           alignment: Alignment.centerLeft,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -412,49 +419,110 @@ class _MapPageState extends State<MapPage> {
     );
   }
 
+  Future<void> _handleFilteredMapExport() async {
+    // Extract coordinates from current markers
+    List<Map<String, double>> filteredCoords = _markers.map((m) => {
+      'lat': m.point.latitude,
+      'lng': m.point.longitude,
+    }).toList();
+
+    if (filteredCoords.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("No points match current filters")),
+      );
+      return;
+    }
+
+    // Show a non-blocking loading indicator
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("Generating high-res map...")),
+    );
+
+    await MapExportService.shareFilteredMap(
+      projectName: widget.projectName,
+      points: filteredCoords,
+    );
+  }
+
+  Future<void> _downloadMapStatus() async {
+    try {
+      // Find the RepaintBoundary in the widget tree
+      RenderRepaintBoundary? boundary =
+      _mapExportKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+
+      if (boundary == null) return;
+
+      // Capture the current pixels on screen
+      var image = await boundary.toImage(pixelRatio: 3.0); // 3.0 for High Definition
+      ByteData? byteData = await image.toByteData(format: ImageByteFormat.png);
+      Uint8List pngBytes = byteData!.buffer.asUint8List();
+
+      // Save to a temporary file
+      final tempDir = await getTemporaryDirectory();
+      final file = await File(
+          '${tempDir.path}/map_snapshot_${DateTime.now().millisecondsSinceEpoch}.png'
+      ).create();
+      await file.writeAsBytes(pngBytes);
+
+      // Share the screenshot
+      await Share.shareXFiles(
+          [XFile(file.path)],
+          text: 'GeoVision Map Snapshot: ${widget.projectName}'
+      );
+    } catch (e) {
+      debugPrint("❌ Screenshot Error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("Failed to capture map view")),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     // Count stats
     int count = _markers.length;
-    String statusText = _showHeatmap
-        ? "Heatmap ($count points)"
-        : "$count Marker${count != 1 ? 's' : ''}";
+    String statusText = (count<1) ? "$count Image":"$count Images";
 
     return Scaffold(
       body: Stack(
         children: [
-          FlutterMap(
-            mapController: _mapController,
-            options: MapOptions(
-              initialCenter: _currentLocation ?? const LatLng(16.6159, 120.3209),
-              initialZoom: 13.0,
-              interactionOptions: const InteractionOptions(
-                flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
-              ),
-            ),
-            children: [
-              TileLayer(
-                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                userAgentPackageName: 'com.example.geovision',
-              ),
-              if (_showHeatmap && _heatmapData.isNotEmpty)
-                HeatMapLayer(
-                  key: ValueKey("heatmap_$_heatmapKey"), // Unique key forces rebuild on data change
-                  heatMapDataSource: InMemoryHeatMapDataSource(data: _heatmapData),
-                  heatMapOptions: HeatMapOptions(
-                    radius: 35,
-                    minOpacity: 0.2,
-                    gradient: {
-                      0.2: Colors.blue,
-                      0.5: Colors.lime,
-                      0.8: Colors.orange,
-                      1.0: Colors.red
-                    },
-                  ),
+          RepaintBoundary(
+            key: _mapExportKey,
+            child: FlutterMap(
+              mapController: _mapController,
+              options: MapOptions(
+                initialCenter: _currentLocation ?? const LatLng(16.6159, 120.3209),
+                initialZoom: 13.0,
+                interactionOptions: const InteractionOptions(
+                  flags: InteractiveFlag.all & ~InteractiveFlag.rotate,
                 ),
-              if (!_showHeatmap)
-                MarkerLayer(markers: _markers),
-            ],
+              ),
+              children: [
+                TileLayer(
+                  urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                  userAgentPackageName: 'com.example.geovision',
+                ),
+                if (_showHeatmap && _heatmapData.isNotEmpty)
+                  HeatMapLayer(
+                    key: ValueKey("heatmap_$_heatmapKey"), // Unique key forces rebuild on data change
+                    heatMapDataSource: InMemoryHeatMapDataSource(data: _heatmapData),
+                    heatMapOptions: HeatMapOptions(
+                      radius: 35,
+                      minOpacity: 0.2,
+                      gradient: {
+                        0.2: Colors.blue,
+                        0.5: Colors.lime,
+                        0.8: Colors.orange,
+                        1.0: Colors.red
+                      },
+                    ),
+                  ),
+                if (!_showHeatmap)
+                  MarkerLayer(markers: _markers),
+              ],
+            ),
           ),
 
           // --- TOP CONTROLS ---
@@ -500,9 +568,7 @@ class _MapPageState extends State<MapPage> {
                     if (widget.projectType == 'classification')
                       Container(
                         decoration: BoxDecoration(
-                          color: Colors.white,
                           borderRadius: BorderRadius.circular(8),
-                          boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 4)],
                         ),
                         child: ClassSelectorDropdown(
                           projectName: widget.projectName,
@@ -515,6 +581,30 @@ class _MapPageState extends State<MapPage> {
                           },
                         ),
                       ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        /*FloatingActionButton.small(
+                          heroTag: 'fab_download_screen',
+                          backgroundColor: Colors.white,
+                          foregroundColor: Colors.black87,
+                          shape: const StadiumBorder(),
+                          onPressed: _downloadMapStatus,
+                          child: Icon(Icons.camera_alt),
+                        ),*/
+                        const SizedBox(height: 12),
+                        FloatingActionButton.small(
+                          heroTag: 'fab_render_map',
+                          backgroundColor: Colors.white,
+                          foregroundColor: Colors.black87,
+                          shape: const StadiumBorder(),
+                          onPressed: _handleFilteredMapExport,
+                          child: Icon(Icons.download_for_offline),
+                        ),
+                        const SizedBox(height: 12),
+
+                      ],
+                    )
                   ],
                 ),
               ),
@@ -523,18 +613,28 @@ class _MapPageState extends State<MapPage> {
 
           // --- STATUS CHIP ---
           Positioned(
-            bottom: 90,
-            left: 20,
+            bottom: 16 + MediaQuery.of(context).padding.bottom, // Adjusts for system nav bar
+            left: 16,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
-              ),
-              child: Text(
-                  statusText,
-                  style: const TextStyle(fontWeight: FontWeight.bold)
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                      Icons.image,
+                      size: 16,
+                      color: Colors.blueGrey
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    statusText,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                      color: Colors.black87,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
@@ -564,12 +664,12 @@ class _MapPageState extends State<MapPage> {
         heroTag: 'fab_map_toggle',
         backgroundColor: Colors.white,
         foregroundColor: Colors.black87,
+        shape: const StadiumBorder(),
         elevation: 4,
-        icon: Icon(_showHeatmap ? Icons.pin_drop : Icons.blur_on, color: _showHeatmap ? Colors.red : Colors.orange),
-        label: Text(_showHeatmap ? "Show Markers" : "Heatmap"),
-        onPressed: () {
-          setState(() => _showHeatmap = !_showHeatmap);
-        },
+        icon: Icon(_showHeatmap ? Icons.pin_drop : Icons.blur_on,
+            color: _showHeatmap ? Colors.red : Colors.orange),
+        label: Text(_showHeatmap ? "Show Markers" : "Show Heatmap"),
+        onPressed: () => setState(() => _showHeatmap = !_showHeatmap),
       ),
     );
   }
