@@ -7,7 +7,7 @@ class DrawingStroke {
   final double width;
   final bool isEraser;
   final bool filled;
-  final Path? path; // <-- Add this to handle the "Bucket" geometry
+  Path? path;
 
   DrawingStroke({
     required this.points,

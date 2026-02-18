@@ -138,35 +138,95 @@ class _AnnotationPageState extends State<AnnotationPage> {
 
     Path? finalPath;
     List<Offset> fillPoints = [];
+    bool isBackground = false;
 
-    // 1. Find which shape was tapped
+    // 1. Check if we tapped inside a specific shape
     for (var stroke in _layers[_activeLayerIndex].strokes.reversed) {
       if (stroke.points.length < 3 || stroke.isEraser) continue;
 
       final shape = Path()..addPolygon(stroke.points, true);
       if (shape.contains(tapPoint)) {
         finalPath = shape;
-        // CRITICAL: Copy the points from the shape we are filling!
-        fillPoints = List.from(stroke.points);
+        fillPoints = List.from(stroke.points); // Save shape outline
         break;
       }
     }
 
-    // 2. If we found a shape, save it using its actual points
-    if (finalPath != null) {
-      setState(() {
-        _layers[_activeLayerIndex].strokes.add(DrawingStroke(
-          points: fillPoints, // Now contains the shape outline, not screen corners
-          color: _getActiveLayerColor(),
-          width: 1.0,
-          filled: true,
-          path: finalPath,
-        ));
-        _layers[_activeLayerIndex].redoStrokes.clear();
-      });
-      _generateThumbnail(_activeLayerIndex);
-    } else {
-      _showFeedback("Tap inside a shape to fill");
+    // 2. If we didn't tap a shape, we are filling the Background
+    if (finalPath == null) {
+      isBackground = true;
+      final rect = Rect.fromLTWH(0, 0, _imageSize!.width, _imageSize!.height);
+      finalPath = Path()..addRect(rect);
+
+      // Create a path containing all existing shapes
+      Path allShapes = Path();
+      for (var stroke in _layers[_activeLayerIndex].strokes) {
+        if (stroke.points.length >= 3 && !stroke.isEraser) {
+          allShapes.addPolygon(stroke.points, true);
+        }
+      }
+
+      // SUBTRACT shapes from the background
+      finalPath = Path.combine(PathOperation.difference, finalPath, allShapes);
+
+      // Save screen corners to flag this as a "Background Fill"
+      fillPoints = [Offset.zero, Offset(_imageSize!.width, _imageSize!.height)];
+    }
+
+    setState(() {
+      final newStroke = DrawingStroke(
+        points: fillPoints,
+        color: _getActiveLayerColor(),
+        width: 1.0,
+        filled: true,
+        path: finalPath,
+      );
+
+      // If it's a background fill, we insert it at the bottom (0) so it's behind everything.
+      // Otherwise, we add it to the top.
+      if (isBackground) {
+        _layers[_activeLayerIndex].strokes.insert(0, newStroke);
+      } else {
+        _layers[_activeLayerIndex].strokes.add(newStroke);
+      }
+
+      _layers[_activeLayerIndex].redoStrokes.clear();
+    });
+    _generateThumbnail(_activeLayerIndex);
+  }
+
+  void _reconstructPaths() {
+    if (_imageSize == null) return;
+
+    for (var layer in _layers) {
+      for (int i = 0; i < layer.strokes.length; i++) {
+        final stroke = layer.strokes[i];
+
+        // Detect if this is a "Background Fill" (Filled + exactly 2 points covering screen)
+        bool isBackgroundFill = stroke.filled &&
+            stroke.points.length == 2 &&
+            stroke.path == null; // Only if path is missing (reloaded)
+
+        if (isBackgroundFill) {
+          // 1. Start with full screen
+          Path newPath = Path()..addRect(Rect.fromLTWH(0, 0, _imageSize!.width, _imageSize!.height));
+
+          // 2. Find all OTHER shapes in this layer to subtract
+          Path otherShapes = Path();
+          for (var otherStroke in layer.strokes) {
+            // Skip self and erasers
+            if (otherStroke == stroke || otherStroke.isEraser || otherStroke.points.length < 3) continue;
+            otherShapes.addPolygon(otherStroke.points, true);
+          }
+
+          // 3. Punch the holes again
+          stroke.path = Path.combine(PathOperation.difference, newPath, otherShapes);
+        }
+        // Detect if this is a "Shape Fill" (Filled + many points)
+        else if (stroke.filled && stroke.points.length > 2 && stroke.path == null) {
+          stroke.path = Path()..addPolygon(stroke.points, true);
+        }
+      }
     }
   }
 
@@ -241,7 +301,8 @@ class _AnnotationPageState extends State<AnnotationPage> {
         if (mounted) {
           setState(() {
             _layers = jsonList.map((j) => AnnotationLayer.fromJson(j)).toList();
-            _activeLayerIndex = _layers.isNotEmpty ? 0 : 0;
+            _reconstructPaths();
+
             if (_layers.isEmpty) _addNewLayer();
           });
         }
