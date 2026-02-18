@@ -67,16 +67,14 @@ class LayerPainter extends CustomPainter {
       paint.blendMode = BlendMode.srcOver;
     }
 
-    // Handle Bucket/Complex Paths
+    // Use the live path if it exists (current session)
     if (stroke.path != null) {
       paint.style = PaintingStyle.fill;
-      // We draw the path directly. Since the canvas is already scaled
-      // in the paint() method, this path will shrink to fit the thumbnail.
       canvas.drawPath(stroke.path!, paint);
       return;
     }
 
-    // Handle Standard Point-based Strokes
+    // RECONSTRUCTION (After Reload)
     if (stroke.points.isNotEmpty) {
       final path = Path();
       path.moveTo(stroke.points.first.dx, stroke.points.first.dy);
@@ -84,12 +82,15 @@ class LayerPainter extends CustomPainter {
         path.lineTo(stroke.points[i].dx, stroke.points[i].dy);
       }
 
+      // Because 'points' now contains the shape outline,
+      // closing it and filling it creates the correct bucket fill.
       if (stroke.filled) {
         path.close();
         paint.style = PaintingStyle.fill;
       } else {
         paint.style = PaintingStyle.stroke;
       }
+
       canvas.drawPath(path, paint);
     }
   }

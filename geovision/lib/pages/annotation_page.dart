@@ -10,7 +10,7 @@ import '../components/annotation/annotation_layer.dart';
 import '../functions/data_service/metadata_handle.dart';
 import '../components/annotation/layer_painter.dart';
 
-enum DrawingTool { brush, bucket, polygon, eraser }
+enum DrawingTool { brush, bucket, shapefill, eraser }
 
 class AnnotationPage extends StatefulWidget {
   final String imagePath;
@@ -27,6 +27,7 @@ class AnnotationPage extends StatefulWidget {
 }
 
 class _AnnotationPageState extends State<AnnotationPage> {
+  bool _isTransforming = false;
   final GlobalKey _imageKey = GlobalKey();
 
   // --- IMAGE DIMENSIONS ---
@@ -135,49 +136,38 @@ class _AnnotationPageState extends State<AnnotationPage> {
   void _executeBucketFill(Offset tapPoint) {
     if (_imageSize == null) return;
 
-    Path canvasPath = Path()..addRect(Rect.fromLTWH(0, 0, _imageSize!.width, _imageSize!.height));
     Path? finalPath;
+    List<Offset> fillPoints = [];
 
-    // 1. Determine if we are tapping inside a shape
-    // We filter out erasers here so you can't "fill" an invisible erased shape
-    bool inside = false;
+    // 1. Find which shape was tapped
     for (var stroke in _layers[_activeLayerIndex].strokes.reversed) {
       if (stroke.points.length < 3 || stroke.isEraser) continue;
 
       final shape = Path()..addPolygon(stroke.points, true);
       if (shape.contains(tapPoint)) {
         finalPath = shape;
-        inside = true;
+        // CRITICAL: Copy the points from the shape we are filling!
+        fillPoints = List.from(stroke.points);
         break;
       }
     }
 
-    // 2. If outside, create background with holes
-    if (!inside) {
-      Path holes = Path();
-      for (var stroke in _layers[_activeLayerIndex].strokes) {
-        // Only treat it as a "hole" if it's a solid line (not an eraser)
-        if (stroke.points.length >= 3 && !stroke.isEraser) {
-          holes.addPolygon(stroke.points, true);
-        }
-      }
-
-      // Canvas MINUS the shapes.
-      // If you erased inside the circle, this subtraction still sees the boundary.
-      finalPath = Path.combine(PathOperation.difference, canvasPath, holes);
+    // 2. If we found a shape, save it using its actual points
+    if (finalPath != null) {
+      setState(() {
+        _layers[_activeLayerIndex].strokes.add(DrawingStroke(
+          points: fillPoints, // Now contains the shape outline, not screen corners
+          color: _getActiveLayerColor(),
+          width: 1.0,
+          filled: true,
+          path: finalPath,
+        ));
+        _layers[_activeLayerIndex].redoStrokes.clear();
+      });
+      _generateThumbnail(_activeLayerIndex);
+    } else {
+      _showFeedback("Tap inside a shape to fill");
     }
-
-    setState(() {
-      _layers[_activeLayerIndex].strokes.add(DrawingStroke(
-        points: [Offset.zero, Offset(_imageSize!.width, _imageSize!.height)],
-        color: _getActiveLayerColor(),
-        width: 1.0,
-        filled: true,
-        path: finalPath,
-      ));
-      _layers[_activeLayerIndex].redoStrokes.clear();
-    });
-    _generateThumbnail(_activeLayerIndex);
   }
 
 
@@ -217,10 +207,16 @@ class _AnnotationPageState extends State<AnnotationPage> {
 
         final recorder = ui.PictureRecorder();
         final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, _imageSize!.width, _imageSize!.height));
-        final painter = LayerPainter(strokes: layer.strokes);
+        final painter = LayerPainter(
+          strokes: layer.strokes,
+          imageSize: _imageSize,
+        );
         painter.paint(canvas, _imageSize!);
 
-        final img = await recorder.endRecording().toImage(_imageSize!.width.toInt(), _imageSize!.height.toInt());
+        final img = await recorder.endRecording().toImage(
+            _imageSize!.width.toInt(),
+            _imageSize!.height.toInt()
+        );
         final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
         if (byteData != null) await file.writeAsBytes(byteData.buffer.asUint8List());
       }
@@ -357,15 +353,22 @@ class _AnnotationPageState extends State<AnnotationPage> {
 
   void _onScaleStart(ScaleStartDetails details) {
     _activePointerCount = details.pointerCount;
-    if (_activePointerCount == 1) {
-      if (_layers[_activeLayerIndex].isLocked) return;
+
+    if (_activePointerCount >= 2) {
+      // Flag that we are now moving/zooming
+      _isTransforming = true;
+
+      _anchorMatrix = _matrixNotifier.value;
+      _anchorFocalPoint = details.localFocalPoint;
+    } else if (_activePointerCount == 1) {
+      // ONLY start a drawing stroke if we aren't currently in a multi-finger interaction
+      if (_isTransforming || _layers[_activeLayerIndex].isLocked) return;
 
       final validPoint = _getLocalValidPoint(details.focalPoint);
       if (validPoint != null) {
         final imgPoint = _toImageCoordinates(validPoint);
-
         if (_currentTool == DrawingTool.bucket) {
-          _executeBucketFill(imgPoint); // Triggers the fill logic immediately
+          _executeBucketFill(imgPoint);
         } else {
           setState(() => _currentStrokePoints = [imgPoint]);
         }
@@ -374,35 +377,45 @@ class _AnnotationPageState extends State<AnnotationPage> {
   }
 
   void _onScaleUpdate(ScaleUpdateDetails details) {
-    if (_activePointerCount != details.pointerCount) return;
-    if (_activePointerCount == 1) {
-      if (_layers[_activeLayerIndex].isLocked || _currentTool == DrawingTool.bucket) return;
-      final validPoint = _getLocalValidPoint(details.focalPoint);
-      if (validPoint != null) setState(() => _currentStrokePoints.add(_toImageCoordinates(validPoint)));
-    } else {
-      final Matrix4 m = Matrix4.translationValues(details.localFocalPoint.dx, details.localFocalPoint.dy, 0)
-        ..rotateZ(details.rotation - _anchorRotation)
-        ..scale(details.scale / _anchorScale)
+    // If we ever hit 2 fingers, force the transform flag to true
+    if (details.pointerCount >= 2) _isTransforming = true;
+
+    if (_isTransforming) {
+      // Navigation Logic: Works with 2 fingers OR 1 finger (if it was part of a 2-finger gesture)
+      final Matrix4 m = Matrix4.identity()
+        ..translate(details.localFocalPoint.dx, details.localFocalPoint.dy)
+        ..rotateZ(details.rotation)
+        ..scale(details.scale)
         ..translate(-_anchorFocalPoint.dx, -_anchorFocalPoint.dy);
+
       _matrixNotifier.value = m * _anchorMatrix;
+    } else if (details.pointerCount == 1 && _currentStrokePoints.isNotEmpty) {
+      // Standard drawing logic: only runs if we never triggered _isTransforming
+      final validPoint = _getLocalValidPoint(details.focalPoint);
+      if (validPoint != null) {
+        setState(() => _currentStrokePoints.add(_toImageCoordinates(validPoint)));
+      }
     }
   }
 
   void _onScaleEnd(ScaleEndDetails details) async {
-    if (_currentStrokePoints.isNotEmpty && _activePointerCount == 1) {
+    // If we were drawing (not transforming), save the stroke
+    if (!_isTransforming && _currentStrokePoints.isNotEmpty) {
       setState(() {
         _layers[_activeLayerIndex].strokes.add(DrawingStroke(
           points: List.from(_currentStrokePoints),
           color: _getActiveLayerColor(),
           width: _getScaledStrokeWidth(),
           isEraser: _currentTool == DrawingTool.eraser,
-          filled: _currentTool == DrawingTool.polygon,
+          filled: _currentTool == DrawingTool.shapefill,
         ));
         _layers[_activeLayerIndex].redoStrokes.clear();
         _currentStrokePoints = [];
       });
       await _generateThumbnail(_activeLayerIndex);
     }
+    _currentStrokePoints = [];
+    _isTransforming = false;
     _activePointerCount = 0;
   }
 
@@ -690,7 +703,7 @@ class _AnnotationPageState extends State<AnnotationPage> {
                                       color: _getActiveLayerColor(),
                                       width: _getScaledStrokeWidth(),
                                       isEraser: _currentTool == DrawingTool.eraser,
-                                      filled: _currentTool == DrawingTool.polygon,
+                                      filled: _currentTool == DrawingTool.shapefill,
                                     ) : null,
                                     imageSize: _imageSize,
                                   ),
@@ -734,7 +747,7 @@ class _AnnotationPageState extends State<AnnotationPage> {
                   items: [
                     _buildToolDropdownItem(DrawingTool.brush, "Brush", Icons.brush),
                     _buildToolDropdownItem(DrawingTool.bucket, "Bucket", Icons.format_color_fill),
-                    _buildToolDropdownItem(DrawingTool.polygon, "Polygon", Icons.polyline),
+                    _buildToolDropdownItem(DrawingTool.shapefill, "Shape Fill", Icons.format_paint),
                     _buildToolDropdownItem(DrawingTool.eraser, "Eraser", Icons.cleaning_services),
                   ],
                   onChanged: (v) => setState(() => _currentTool = v!),
