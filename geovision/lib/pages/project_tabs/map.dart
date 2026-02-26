@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
@@ -61,7 +62,8 @@ class _LocationDisplayState extends State<LocationDisplay> {
     setState(() => _displayText = "Resolving... ($latLngString)");
 
     try {
-      List<Placemark> placemarks = await placemarkFromCoordinates(widget.latitude, widget.longitude);
+      List<Placemark> placemarks = await placemarkFromCoordinates(widget.latitude, widget.longitude)
+          .timeout(const Duration(seconds: 5));
 
       if (placemarks.isNotEmpty && mounted) {
         Placemark place = placemarks[0];
@@ -429,28 +431,63 @@ class _MapPageState extends State<MapPage> {
   }
 
   Future<void> _handleFilteredMapExport() async {
-    // Extract coordinates from current markers
-    List<Map<String, double>> filteredCoords = _markers.map((m) => {
-      'lat': m.point.latitude,
-      'lng': m.point.longitude,
-    }).toList();
-
-    if (filteredCoords.isEmpty) {
+    // 1. Check if there is data to export
+    if (_markers.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("No points match current filters")),
       );
       return;
     }
 
-    // Show a non-blocking loading indicator
+    // 2. Extract coordinates
+    // We explicitly cast to ensure the Service receives the expected format
+    List<Map<String, double>> filteredCoords = _markers.map((m) => {
+      'lat': m.point.latitude,
+      'lng': m.point.longitude,
+    }).toList();
+
+    // 3. Show loading feedback
+    ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Generating high-res map...")),
+      const SnackBar(
+        content: Row(
+          children: [
+            SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+            SizedBox(width: 16),
+            Text("Generating heatmap..."),
+          ],
+        ),
+        duration: Duration(seconds: 2), // Auto-hide if it hangs
+      ),
     );
 
-    await MapExportService.shareFilteredMap(
-      projectName: widget.projectName,
-      points: filteredCoords,
-    );
+    try {
+      debugPrint("🚀 Starting Export for ${filteredCoords.length} points...");
+
+      // 4. Call the service
+      await MapExportService.shareFilteredMap(
+        projectName: widget.projectName,
+        points: filteredCoords,
+      );
+
+      debugPrint("✅ Export function completed successfully.");
+
+    } catch (e, stackTrace) {
+      // 5. CATCH & DISPLAY ERRORS
+      debugPrint("❌ Export Error: $e");
+      debugPrint("Stacktrace: $stackTrace");
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Export Failed: $e"),
+            backgroundColor: Colors.red,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _downloadMapStatus() async {

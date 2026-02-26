@@ -48,7 +48,7 @@ class ExportService {
         description = (await descFile.readAsString()).trim();
       }
 
-      // --- 2. HEAVY PROCESSING (Isolate) ---
+      // --- 2. HEAVY PROCESSING ---
       // Moving the 1000+ image loop and dimension fetching to background
       final Map<String, dynamic> exportResults = await _processCocoDataInBackground({
         'geoData': geoData,
@@ -60,7 +60,7 @@ class ExportService {
 
       if (token?.isCancelled ?? false) return null;
 
-      // --- 3. CONSTRUCT & SERIALIZE JSON (Isolate) ---
+      // --- 3. CONSTRUCT & SERIALIZE JSON ---
       final fullCocoJson = {
         "info": {
           "description": description.isNotEmpty ? description : "$projectName GeoVision Export.",
@@ -78,7 +78,6 @@ class ExportService {
         "categories": exportResults['categories']
       };
 
-      // Encoding a massive 1000-image JSON on main thread causes the "Matrix4" lag
       final String jsonString = await compute(jsonEncode, fullCocoJson);
       final cocoFile = File('${sourceDir.path}/_annotations.coco.json');
       await cocoFile.writeAsString(jsonString);
@@ -88,7 +87,7 @@ class ExportService {
       List<Map<String, double>> points = geoData.map((e) => {
         'lat': (e['lat'] as num).toDouble(),
         'lng': (e['lng'] as num).toDouble()
-      }).toList();
+      }).where((p) => p['lat'] != 0.0 || p['lng'] != 0.0).toList();
 
       if (token?.isCancelled ?? false) return null;
 
@@ -99,15 +98,22 @@ class ExportService {
         });
 
 
-
         for (int i = 0; i < clusters.length; i++) {
-          final mapImg = await MapCompositor.generateFinalMap(clusters[i]);
-          if (mapImg != null) {
-            final mapPath = '${sourceDir.path}/map_overview_${i + 1}.png';
-            final pngBytes = await compute(_encodePngInBackground, mapImg);
-            final mapFile = File(mapPath);
-            await mapFile.writeAsBytes(pngBytes);
-            tempFiles.add(mapFile);
+          try {
+            // TIMEOUT TO PREVENT HANGING WHEN OFFLINE ---
+            final mapImg = await MapCompositor.generateFinalMap(clusters[i])
+                .timeout(const Duration(seconds: 15));
+
+            if (mapImg != null) {
+              final mapPath = '${sourceDir.path}/map_overview_${i + 1}.png';
+              final pngBytes = await compute(_encodePngInBackground, mapImg);
+              final mapFile = File(mapPath);
+              await mapFile.writeAsBytes(pngBytes);
+              tempFiles.add(mapFile);
+            }
+          } catch (e) {
+            // If offline, it times out and safely skips map generation without crashing the export.
+            debugPrint("Map generation skipped (likely offline): $e");
           }
         }
       }
@@ -217,6 +223,9 @@ Future<Map<String, dynamic>> _processCocoDataInBackground(Map<String, dynamic> p
   final String projectType = params['projectType'];
   final String annotationDirPath = params['annotationDirPath'];
 
+  const double imgWidth = 640.0;
+  const double imgHeight = 640.0;
+
   Map<String, int> classToId = {};
   List<Map<String, dynamic>> categories = [];
   int nextCatId = 1;
@@ -243,22 +252,7 @@ Future<Map<String, dynamic>> _processCocoDataInBackground(Map<String, dynamic> p
     String filename = p.basename(currentPath);
     int imageId = i + 1;
 
-    File imageFile = File(currentPath);
-
-    // If the reconstructed path doesn't exist, we skip the entry.
-    // This prevents the exporter from crashing on missing files.
-    if (!imageFile.existsSync()) {
-      debugPrint("Skipping missing file during export: $currentPath");
-      continue;
-    }
-
-    // Read image dimensions for COCO standard
-    final Uint8List bytes = imageFile.readAsBytesSync();
-    final img.Image? decoded = img.decodeImage(bytes);
-    if (decoded == null) continue;
-
-    int imgWidth = decoded.width;
-    int imgHeight = decoded.height;
+    if (!File(currentPath).existsSync()) continue;
 
     images.add({
       "id": imageId,
@@ -356,7 +350,11 @@ void _zipInBackground(List<String> paths) {
       if (entity is File) {
         String fileName = entity.path.split(Platform.pathSeparator).last;
         if (fileName.startsWith('.') || excludedFiles.contains(fileName.toLowerCase())) continue;
-        if (entity.path.contains('${Platform.pathSeparator}annotation${Platform.pathSeparator}')) continue;
+
+        if (entity.path.contains('${Platform.pathSeparator}annotation${Platform.pathSeparator}') &&
+            fileName.toLowerCase().endsWith('.json')) {
+          continue;
+        }
 
         String relativePath = entity.path.replaceFirst(sourcePath, '');
         while (relativePath.startsWith(Platform.pathSeparator)) {

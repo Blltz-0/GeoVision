@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -222,6 +223,24 @@ class _ImagesPageState extends State<ImagesPage> {
           : "${cleanProject}_${cleanClass}_$globalCounter.png";
 
       String finalPath = '${projectDir.path}/$nextName';
+
+      if (widget.projectType == 'segmentation') {
+        try {
+          final String baseImageName = p.basenameWithoutExtension(nextName);
+          final Directory annotationDir = Directory('${appDir.path}/projects/${widget.projectName}/annotation');
+
+          if (await annotationDir.exists()) {
+            final List<FileSystemEntity> existingAnnos = annotationDir.listSync();
+            for (var entity in existingAnnos) {
+              if (entity is File && p.basename(entity.path).startsWith(baseImageName)) {
+                await entity.delete();
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint("Error clearing orphaned annotations: $e");
+        }
+      }
 
       try {
         // A. Read Metadata (Using Helper)
@@ -585,7 +604,9 @@ class _ImagesPageState extends State<ImagesPage> {
   Widget build(BuildContext context) {
     if (widget.isLoading) return const Center(child: CircularProgressIndicator());
 
-    List<File> allImages = [...widget.images, ..._tempUploadedImages];
+    List<File> allImages = [...widget.images, ..._tempUploadedImages]
+        .where((file) => file.existsSync())
+        .toList();
     List<File> filteredImages = allImages;
     if (_filterClass != "All") {
       filteredImages = allImages.where((file) {

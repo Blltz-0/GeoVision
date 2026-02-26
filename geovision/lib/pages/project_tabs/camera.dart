@@ -155,16 +155,28 @@ class _CameraPageState extends State<CameraPage> with WidgetsBindingObserver {
     await _setupCamera();
   }
 
+  Future<Position?> _getFallbackLocation() async {
+    try {
+      return await Geolocator.getCurrentPosition().timeout(const Duration(seconds: 5));
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _takePicture() async {
     if (!widget.isActive || _controller == null || !_controller!.value.isInitialized || _isCapturing) return;
 
     setState(() => _isCapturing = true);
     final String tagForThisPhoto = widget.projectType == 'segmentation' ? "" : _activeTag;
     try {
-      Position? locationToSave = _currentPosition ?? await Geolocator.getCurrentPosition().catchError((_) => null);
+      Future<Position?> locationFuture = _currentPosition != null
+          ? Future.value(_currentPosition)
+          : _getFallbackLocation();
+
       final XFile rawImage = await _controller!.takePicture();
       if (mounted) setState(() => _isCapturing = false);
-      _backgroundPipeline(rawImage, tagForThisPhoto, Future.value(locationToSave));
+
+      _backgroundPipeline(rawImage, tagForThisPhoto, Future.value(locationFuture));
     } catch (e) { if (mounted) setState(() => _isCapturing = false);}
   }
 

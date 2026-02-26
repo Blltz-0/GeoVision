@@ -26,19 +26,17 @@ class LayerPainter extends CustomPainter {
 
     // Draw saved strokes
     for (final stroke in strokes) {
-      _drawStroke(canvas, stroke);
+      _drawStroke(canvas, stroke, isLive: false);
     }
 
     // Draw current live stroke
     if (currentStroke != null) {
-      _drawStroke(canvas, currentStroke!);
+      _drawStroke(canvas, currentStroke!, isLive: true);
     }
 
-    canvas.restore(); // Restore before drawing cursor (cursor is usually screen-space)
+    canvas.restore(); // Restore before drawing cursor
 
     if (cursorPosition != null && currentStroke != null) {
-      // For the cursor, we want it to follow the finger visually
-      // We calculate the visual position manually since we popped the canvas.save()
       final visualPos = cursorPosition! * scale;
       final visualRadius = (currentStroke!.width * scale) / 2;
 
@@ -54,7 +52,7 @@ class LayerPainter extends CustomPainter {
     }
   }
 
-  void _drawStroke(Canvas canvas, DrawingStroke stroke) {
+  void _drawStroke(Canvas canvas, DrawingStroke stroke,{required bool isLive}) {
     final paint = Paint()
       ..strokeWidth = stroke.width
       ..strokeCap = StrokeCap.round
@@ -68,8 +66,8 @@ class LayerPainter extends CustomPainter {
     }
 
     // Use the live path if it exists (current session)
-    if (stroke.path != null) {
-      paint.style = PaintingStyle.fill;
+    if (stroke.path != null && !isLive) {
+      paint.style = stroke.filled ? PaintingStyle.fill : PaintingStyle.stroke;
       canvas.drawPath(stroke.path!, paint);
       return;
     }
@@ -78,17 +76,19 @@ class LayerPainter extends CustomPainter {
     if (stroke.points.isNotEmpty) {
       final path = Path();
       path.moveTo(stroke.points.first.dx, stroke.points.first.dy);
+
       for (int i = 1; i < stroke.points.length; i++) {
         path.lineTo(stroke.points[i].dx, stroke.points[i].dy);
       }
-
-      // Because 'points' now contains the shape outline,
-      // closing it and filling it creates the correct bucket fill.
       if (stroke.filled) {
         path.close();
         paint.style = PaintingStyle.fill;
       } else {
         paint.style = PaintingStyle.stroke;
+      }
+
+      if (!isLive) {
+        stroke.path = path;
       }
 
       canvas.drawPath(path, paint);

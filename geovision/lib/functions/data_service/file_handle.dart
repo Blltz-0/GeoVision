@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:geovision/functions/data_service/file_directories.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -14,11 +15,35 @@ class MetadataFiles {
     String projectType = 'classification'
   }) async {
     final File imageFile = File(imagePath);
-    if (await imageFile.exists()) await imageFile.delete();
+
+    // 1. Evict from Flutter's cache so the old image stops showing, then delete physical file
+    if (await imageFile.exists()) {
+      await FileImage(imageFile).evict();
+      await imageFile.delete();
+    }
 
     final filename = p.basename(imagePath);
     await MetadataGeoJson.removeEntry(projectName, filename);
 
+    // 2. Delete associated annotation files (JSON data and PNG layers)
+    try {
+      final String baseImageName = p.basenameWithoutExtension(imagePath);
+      final parentDir = File(imagePath).parent.parent;
+      final Directory annotationDir = Directory(p.join(parentDir.path, 'annotation'));
+
+      if (await annotationDir.exists()) {
+        final List<FileSystemEntity> files = annotationDir.listSync();
+        for (var file in files) {
+          if (file is File && p.basename(file.path).startsWith(baseImageName)) {
+            await file.delete();
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("Error deleting annotations: $e");
+    }
+
+    // 3. Remove from upload history
     try {
       final historyFile = await FileDirectories.getUploadHistoryFile(projectName); // Using helper
       if (await historyFile.exists()) {

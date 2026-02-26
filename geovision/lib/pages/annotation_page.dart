@@ -38,8 +38,6 @@ class _AnnotationPageState extends State<AnnotationPage> {
   final ValueNotifier<Matrix4> _matrixNotifier = ValueNotifier(Matrix4.identity());
   Matrix4 _anchorMatrix = Matrix4.identity();
   Offset _anchorFocalPoint = Offset.zero;
-  double _anchorScale = 1.0;
-  double _anchorRotation = 0.0;
 
   // --- DRAWING STATE ---
   DrawingTool _currentTool = DrawingTool.brush;
@@ -54,6 +52,7 @@ class _AnnotationPageState extends State<AnnotationPage> {
   // --- SAVING STATE ---
   Timer? _autoSaveTimer;
   bool _isSaving = false;
+  bool _isDirty = false; // Tracks if changes were made since last save
 
   @override
   void initState() {
@@ -127,6 +126,34 @@ class _AnnotationPageState extends State<AnnotationPage> {
     );
   }
 
+  Future<bool> _showExitConfirmation() async {
+    return await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF333333),
+        title: const Text("Save & Exit?", style: TextStyle(color: Colors.white)),
+        content: const Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("Do you want to save and exit?", style: TextStyle(color: Colors.white70)),
+            Text("Your progress will be saved", style: TextStyle(color: Colors.white70)),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text("Cancel", style: TextStyle(color: Colors.white)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text("Save & Exit", style: TextStyle(color: Colors.blueAccent)),
+          ),
+        ],
+      ),
+    ) ?? false;
+  }
+
   Color _getActiveLayerColor() {
     if (_layers.isEmpty) return Colors.white;
     final layer = _layers[_activeLayerIndex];
@@ -140,36 +167,27 @@ class _AnnotationPageState extends State<AnnotationPage> {
     List<Offset> fillPoints = [];
     bool isBackground = false;
 
-    // 1. Check if we tapped inside a specific shape
     for (var stroke in _layers[_activeLayerIndex].strokes.reversed) {
       if (stroke.points.length < 3 || stroke.isEraser) continue;
-
       final shape = Path()..addPolygon(stroke.points, true);
       if (shape.contains(tapPoint)) {
         finalPath = shape;
-        fillPoints = List.from(stroke.points); // Save shape outline
+        fillPoints = List.from(stroke.points);
         break;
       }
     }
 
-    // 2. If we didn't tap a shape, we are filling the Background
     if (finalPath == null) {
       isBackground = true;
       final rect = Rect.fromLTWH(0, 0, _imageSize!.width, _imageSize!.height);
       finalPath = Path()..addRect(rect);
-
-      // Create a path containing all existing shapes
       Path allShapes = Path();
       for (var stroke in _layers[_activeLayerIndex].strokes) {
         if (stroke.points.length >= 3 && !stroke.isEraser) {
           allShapes.addPolygon(stroke.points, true);
         }
       }
-
-      // SUBTRACT shapes from the background
       finalPath = Path.combine(PathOperation.difference, finalPath, allShapes);
-
-      // Save screen corners to flag this as a "Background Fill"
       fillPoints = [Offset.zero, Offset(_imageSize!.width, _imageSize!.height)];
     }
 
@@ -182,8 +200,6 @@ class _AnnotationPageState extends State<AnnotationPage> {
         path: finalPath,
       );
 
-      // If it's a background fill, we insert it at the bottom (0) so it's behind everything.
-      // Otherwise, we add it to the top.
       if (isBackground) {
         _layers[_activeLayerIndex].strokes.insert(0, newStroke);
       } else {
@@ -191,45 +207,32 @@ class _AnnotationPageState extends State<AnnotationPage> {
       }
 
       _layers[_activeLayerIndex].redoStrokes.clear();
+      _isDirty = true; // Mark as dirty
     });
     _generateThumbnail(_activeLayerIndex);
   }
 
   void _reconstructPaths() {
     if (_imageSize == null) return;
-
     for (var layer in _layers) {
       for (int i = 0; i < layer.strokes.length; i++) {
         final stroke = layer.strokes[i];
-
-        // Detect if this is a "Background Fill" (Filled + exactly 2 points covering screen)
-        bool isBackgroundFill = stroke.filled &&
-            stroke.points.length == 2 &&
-            stroke.path == null; // Only if path is missing (reloaded)
+        bool isBackgroundFill = stroke.filled && stroke.points.length == 2 && stroke.path == null;
 
         if (isBackgroundFill) {
-          // 1. Start with full screen
           Path newPath = Path()..addRect(Rect.fromLTWH(0, 0, _imageSize!.width, _imageSize!.height));
-
-          // 2. Find all OTHER shapes in this layer to subtract
           Path otherShapes = Path();
           for (var otherStroke in layer.strokes) {
-            // Skip self and erasers
             if (otherStroke == stroke || otherStroke.isEraser || otherStroke.points.length < 3) continue;
             otherShapes.addPolygon(otherStroke.points, true);
           }
-
-          // 3. Punch the holes again
           stroke.path = Path.combine(PathOperation.difference, newPath, otherShapes);
-        }
-        // Detect if this is a "Shape Fill" (Filled + many points)
-        else if (stroke.filled && stroke.points.length > 2 && stroke.path == null) {
+        } else if (stroke.filled && stroke.points.length > 2 && stroke.path == null) {
           stroke.path = Path()..addPolygon(stroke.points, true);
         }
       }
     }
   }
-
 
   // --- FILE MANAGEMENT ---
   Future<Directory> _getAnnotationDirectory() async {
@@ -241,6 +244,9 @@ class _AnnotationPageState extends State<AnnotationPage> {
 
   Future<void> _saveProject({bool quiet = false}) async {
     if (_isSaving || _imageSize == null) return;
+    // For autosave, don't bother if nothing changed
+    if (quiet && !_isDirty) return;
+
     _isSaving = true;
     if (!quiet && mounted) _showFeedback("Saving...");
 
@@ -267,22 +273,24 @@ class _AnnotationPageState extends State<AnnotationPage> {
 
         final recorder = ui.PictureRecorder();
         final canvas = Canvas(recorder, Rect.fromLTWH(0, 0, _imageSize!.width, _imageSize!.height));
-        final painter = LayerPainter(
-          strokes: layer.strokes,
-          imageSize: _imageSize,
-        );
+        final painter = LayerPainter(strokes: layer.strokes, imageSize: _imageSize);
         painter.paint(canvas, _imageSize!);
 
-        final img = await recorder.endRecording().toImage(
-            _imageSize!.width.toInt(),
-            _imageSize!.height.toInt()
-        );
+        final picture = recorder.endRecording();
+        final img = await picture.toImage(_imageSize!.width.toInt(), _imageSize!.height.toInt());
         final byteData = await img.toByteData(format: ui.ImageByteFormat.png);
         if (byteData != null) await file.writeAsBytes(byteData.buffer.asUint8List());
+
+        picture.dispose();
+        img.dispose();
       }
 
       final jsonFile = File(p.join(dir.path, '${baseImageName}_data.json'));
       await jsonFile.writeAsString(jsonEncode(_layers.map((l) => l.toJson()).toList()));
+
+      if (mounted) {
+        setState(() => _isDirty = false); // Reset dirty flag after successful save
+      }
     } catch (e) {
       debugPrint("Error saving: $e");
     } finally {
@@ -302,7 +310,6 @@ class _AnnotationPageState extends State<AnnotationPage> {
           setState(() {
             _layers = jsonList.map((j) => AnnotationLayer.fromJson(j)).toList();
             _reconstructPaths();
-
             if (_layers.isEmpty) _addNewLayer();
           });
         }
@@ -345,6 +352,7 @@ class _AnnotationPageState extends State<AnnotationPage> {
       } else {
         _activeLayerIndex = _activeLayerIndex.clamp(0, _layers.length - 1);
       }
+      _isDirty = true; // Deleting a layer counts as a change
     });
     _showFeedback("Layer Deleted");
   }
@@ -354,6 +362,7 @@ class _AnnotationPageState extends State<AnnotationPage> {
     setState(() {
       _layers[index].strokes.clear();
       _layers[index].redoStrokes.clear();
+      _isDirty = true; // Mark as dirty
     });
     await _generateThumbnail(index);
     _showFeedback("Layer Cleared");
@@ -367,6 +376,7 @@ class _AnnotationPageState extends State<AnnotationPage> {
       layer.labelColor = colorInt;
       final newColor = Color(colorInt);
       layer.strokes = layer.strokes.map((s) => s.isEraser ? s : s.copyWith(color: newColor)).toList();
+      _isDirty = true; // Updating label counts as a change
     });
     _generateThumbnail(layerIndex);
   }
@@ -383,23 +393,24 @@ class _AnnotationPageState extends State<AnnotationPage> {
     final canvas = Canvas(recorder, const Rect.fromLTWH(0, 0, thumbSize, thumbSize));
 
     if (_imageSize != null) {
-      // Determine the scale factor (e.g., 100 / 640)
       double scale = thumbSize / _imageSize!.width;
       canvas.scale(scale);
     }
 
-    // Draw the strokes using the existing painter
     final painter = LayerPainter(strokes: layer.strokes);
     painter.paint(canvas, Size(_imageSize?.width ?? thumbSize, _imageSize?.height ?? thumbSize));
 
     final picture = recorder.endRecording();
     final img = await picture.toImage(thumbSize.toInt(), thumbSize.toInt());
+    picture.dispose();
 
     if (mounted) {
       setState(() {
-        layer.thumbnail?.dispose(); // Clean up old memory
+        layer.thumbnail?.dispose();
         layer.thumbnail = img;
       });
+    } else {
+      img.dispose();
     }
   }
 
@@ -414,17 +425,12 @@ class _AnnotationPageState extends State<AnnotationPage> {
 
   void _onScaleStart(ScaleStartDetails details) {
     _activePointerCount = details.pointerCount;
-
     if (_activePointerCount >= 2) {
-      // Flag that we are now moving/zooming
       _isTransforming = true;
-
       _anchorMatrix = _matrixNotifier.value;
       _anchorFocalPoint = details.localFocalPoint;
     } else if (_activePointerCount == 1) {
-      // ONLY start a drawing stroke if we aren't currently in a multi-finger interaction
       if (_isTransforming || _layers[_activeLayerIndex].isLocked) return;
-
       final validPoint = _getLocalValidPoint(details.focalPoint);
       if (validPoint != null) {
         final imgPoint = _toImageCoordinates(validPoint);
@@ -438,20 +444,15 @@ class _AnnotationPageState extends State<AnnotationPage> {
   }
 
   void _onScaleUpdate(ScaleUpdateDetails details) {
-    // If we ever hit 2 fingers, force the transform flag to true
     if (details.pointerCount >= 2) _isTransforming = true;
-
     if (_isTransforming) {
-      // Navigation Logic: Works with 2 fingers OR 1 finger (if it was part of a 2-finger gesture)
       final Matrix4 m = Matrix4.identity()
         ..translate(details.localFocalPoint.dx, details.localFocalPoint.dy)
         ..rotateZ(details.rotation)
         ..scale(details.scale)
         ..translate(-_anchorFocalPoint.dx, -_anchorFocalPoint.dy);
-
       _matrixNotifier.value = m * _anchorMatrix;
     } else if (details.pointerCount == 1 && _currentStrokePoints.isNotEmpty) {
-      // Standard drawing logic: only runs if we never triggered _isTransforming
       final validPoint = _getLocalValidPoint(details.focalPoint);
       if (validPoint != null) {
         setState(() => _currentStrokePoints.add(_toImageCoordinates(validPoint)));
@@ -460,7 +461,6 @@ class _AnnotationPageState extends State<AnnotationPage> {
   }
 
   void _onScaleEnd(ScaleEndDetails details) async {
-    // If we were drawing (not transforming), save the stroke
     if (!_isTransforming && _currentStrokePoints.isNotEmpty) {
       setState(() {
         _layers[_activeLayerIndex].strokes.add(DrawingStroke(
@@ -472,6 +472,7 @@ class _AnnotationPageState extends State<AnnotationPage> {
         ));
         _layers[_activeLayerIndex].redoStrokes.clear();
         _currentStrokePoints = [];
+        _isDirty = true; // Mark as dirty
       });
       await _generateThumbnail(_activeLayerIndex);
     }
@@ -485,6 +486,7 @@ class _AnnotationPageState extends State<AnnotationPage> {
     if (layer.strokes.isEmpty) return;
     setState(() {
       layer.redoStrokes.add(layer.strokes.removeLast());
+      _isDirty = true; // Mark as dirty
     });
     await _generateThumbnail(_activeLayerIndex);
   }
@@ -494,6 +496,7 @@ class _AnnotationPageState extends State<AnnotationPage> {
     if (layer.redoStrokes.isEmpty) return;
     setState(() {
       layer.strokes.add(layer.redoStrokes.removeLast());
+      _isDirty = true; // Mark as dirty
     });
     await _generateThumbnail(_activeLayerIndex);
   }
@@ -569,6 +572,7 @@ class _AnnotationPageState extends State<AnnotationPage> {
                                 _addNewLayer();
                                 setModalState(() {});
                                 setState(() {});
+                                _isDirty = true; // Adding a layer counts as change
                               },
                             ),
                           ],
@@ -623,12 +627,13 @@ class _AnnotationPageState extends State<AnnotationPage> {
                                           DropdownButtonHideUnderline(
                                             child: DropdownButton<String>(
                                               isDense: true,
+                                              isExpanded: true,
                                               hint: const Text("Select Label", style: TextStyle(color: Colors.grey, fontSize: 11)),
                                               value: layer.labelName,
                                               dropdownColor: const Color(0xFF333333),
                                               items: availableLabels.map((l) => DropdownMenuItem<String>(
                                                 value: l['name'],
-                                                child: Text(l['name'], style: const TextStyle(color: Colors.white, fontSize: 12)),
+                                                child: Text(l['name'], style: const TextStyle(color: Colors.white, fontSize: 12), overflow: TextOverflow.ellipsis),
                                               )).toList(),
                                               onChanged: (val) {
                                                 if (val != null) {
@@ -694,6 +699,7 @@ class _AnnotationPageState extends State<AnnotationPage> {
                 _layers.clear();
                 _addNewLayer();
                 _activeLayerIndex = 0;
+                _isDirty = true; // Resetting is a major change
               });
               setModalState(() {});
               Navigator.pop(context);
@@ -716,8 +722,11 @@ class _AnnotationPageState extends State<AnnotationPage> {
       canPop: false,
       onPopInvokedWithResult: (didPop, result) async {
         if (didPop) return;
-        await _saveProject();
-        if (context.mounted) Navigator.of(context).pop(true);
+        final bool shouldExit = await _showExitConfirmation();
+        if (shouldExit) {
+          await _saveProject();
+          if (context.mounted) Navigator.of(context).pop(true);
+        }
       },
       child: Scaffold(
         backgroundColor: Colors.black,
@@ -729,6 +738,14 @@ class _AnnotationPageState extends State<AnnotationPage> {
             IconButton(icon: const Icon(Icons.refresh), onPressed: () => _matrixNotifier.value = Matrix4.identity()),
             IconButton(icon: const Icon(Icons.undo), onPressed: activeLayer.strokes.isNotEmpty ? _undo : null),
             IconButton(icon: const Icon(Icons.redo), onPressed: activeLayer.redoStrokes.isNotEmpty ? _redo : null),
+            // --- MANUAL SAVE BUTTON ---
+            IconButton(
+              icon: Icon(
+                _isDirty ? Icons.save : Icons.save_outlined,
+                color: _isDirty ? Colors.white : Colors.grey[1000],
+              ),
+              onPressed: _isDirty ? () => _saveProject() : null,
+            ),
           ],
         ),
         body: Stack(
@@ -782,14 +799,17 @@ class _AnnotationPageState extends State<AnnotationPage> {
             Positioned(
               top: 20, left: 0, right: 0,
               child: Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20)),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.circle, color: _getActiveLayerColor(), size: 12),
-                    const SizedBox(width: 8),
-                    Text(activeLayer.labelName ?? "No Label", style: const TextStyle(color: Colors.white)),
-                  ]),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.9),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    decoration: BoxDecoration(color: Colors.black54, borderRadius: BorderRadius.circular(20)),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.circle, color: _getActiveLayerColor(), size: 12),
+                      const SizedBox(width: 8),
+                      Flexible(child: Text(activeLayer.labelName ?? "No Label", style: const TextStyle(color: Colors.white), overflow: TextOverflow.ellipsis, maxLines: 1)),
+                    ]),
+                  ),
                 ),
               ),
             ),

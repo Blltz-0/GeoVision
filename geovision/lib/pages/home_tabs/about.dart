@@ -66,19 +66,35 @@ class AboutPage extends StatelessWidget {
             const SizedBox(height: 20),
 
             // Developer / Contact Info
-            _buildInfoRow(Icons.code, 'Developer/s', ['Lawrence C. Reolegio'],),
+            _buildInfoRow(Icons.code, 'Developer', ['Lawrence C. Reolegio'],),
             const SizedBox(height: 10),
             _buildInfoRow(Icons.email, 'Contact', ['reolegio.l@gmail.com']),
             const SizedBox(height: 10),
-            _buildInfoRow(Icons.copyright, 'License', ['MIT License']),
+            _buildInfoRow(Icons.phone_android, 'Software', ['https://github.com/Blltz-0/GeoVision']),
+
             const SizedBox(height: 10),
-            _buildInfoRow(Icons.copyright, 'Software', ['https://github.com/Blltz-0/GeoVision']),
+            const SizedBox(height: 10),
+            const SizedBox(height: 10),
+            const SizedBox(height: 10),
+            _buildInfoRow(Icons.people, 'Members', ['Rendell Dwight N. Quesada', 'Isiah Grant C. Bago',
+              'Emil A. Corpuz',
+              'Dianne Fhel E. Jacla',
+              'John Paul M. Reyes',
+              'Jolina Elaine R. Yaris'
+            ]),
+            const SizedBox(height: 10),
+            _buildInfoRow(Icons.book_outlined, 'Adviser', ['Maria Jeseca C. Baculo'],),
+
 
             const SizedBox(height: 40),
             const Text(
-              '© 2025 GeoVision Inc.',
+              ' Copyright © 2026 Reolegio, L. All Rights Reserved.',
               style: TextStyle(color: Colors.grey, fontSize: 12),
             ),
+            const SizedBox(height: 10),
+            const SizedBox(height: 10),
+            const SizedBox(height: 10),
+            const SizedBox(height: 10),
           ],
         ),
       ),

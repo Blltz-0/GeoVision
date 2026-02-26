@@ -2,8 +2,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 import 'dart:convert';
-import 'package:path_provider/path_provider.dart';
-
 import '../components/classes/class_creator.dart';
 import '../components/image_view/edit_metadata_dialog.dart';
 import '../components/image_view/location_decoder.dart';
@@ -98,22 +96,6 @@ class _ImageViewState extends State<ImageView> {
   }
 
   // --- 3. HELPER FUNCTIONS ---
-  Future<void> _removeImageFromHistory(String filename) async {
-    try {
-      final appDir = await getApplicationDocumentsDirectory();
-      final historyFile = File('${appDir.path}/projects/${widget.projectName}/upload_history.json');
-      if (await historyFile.exists()) {
-        final Map<String, dynamic> historyMap = jsonDecode(await historyFile.readAsString());
-        if (historyMap.containsKey(filename)) {
-          historyMap.remove(filename);
-          await historyFile.writeAsString(jsonEncode(historyMap));
-        }
-      }
-    } catch (e) {
-      debugPrint("Error removing history: $e");
-    }
-  }
-
   bool _hasAnnotation(String imagePath) {
     if (widget.projectType != 'segmentation') return false;
     try {
@@ -299,7 +281,6 @@ class _ImageViewState extends State<ImageView> {
               onInfo: () => showImageInformation(context, _currentImagePaths[_currentIndex]),
               onDelete: () async {
                 final String currentPath = _currentImagePaths[_currentIndex];
-                final String filename = p.basename(currentPath);
                 bool confirm = await showDialog(
                     context: context,
                     builder: (ctx) => AlertDialog(
@@ -313,8 +294,12 @@ class _ImageViewState extends State<ImageView> {
                 ) ?? false;
 
                 if (confirm && mounted) {
-                  await MetadataService.deleteImage(projectName: widget.projectName, imagePath: currentPath);
-                  await _removeImageFromHistory(filename);
+                  // Centralized deletion: Handles file, cache eviction, annotations, and history.
+                  await MetadataService.deleteImage(
+                      projectName: widget.projectName,
+                      imagePath: currentPath,
+                      projectType: widget.projectType
+                  );
                   Navigator.pop(context, true);
                 }
               },
