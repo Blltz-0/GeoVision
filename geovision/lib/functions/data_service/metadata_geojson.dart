@@ -23,8 +23,8 @@ class MetadataGeoJson {
           final json = jsonDecode(content);
           if (json['features'] != null) {
             for (var f in json['features']) {
-              // We store just the filename now
-              String name = f['properties']['path'] ?? "";
+              // FIX: Rescue files that were corrupted by the old 'name' key
+              String name = f['properties']['path'] ?? f['properties']['name'] ?? "";
               existingData[name] = f;
             }
           }
@@ -100,7 +100,7 @@ class MetadataGeoJson {
           "coordinates": [lng, lat]
         },
         "properties": {
-          "name": filename,
+          "path": filename, // CRITICAL FIX: Changed from 'name' to 'path' to match saveToCsv!
           "class": projectType == 'segmentation' ? "" : finalClass,
           "time": time,
         }
@@ -131,10 +131,12 @@ class MetadataGeoJson {
       final List features = geoJson['features'];
 
       for (var feature in features) {
-        String savedName = feature['properties']['path'] ?? "";
+        // FIX: Safe lookup
+        String savedName = feature['properties']['path'] ?? feature['properties']['name'] ?? "";
         if (savedName == oldName) {
-          feature['properties']['path'] = newName; // UPDATE TO NEW FILENAME
+          feature['properties']['path'] = newName;
           feature['properties']['class'] = newClass;
+          feature['properties'].remove('name'); // Clean up old corruption
           break;
         }
       }
@@ -181,8 +183,8 @@ class MetadataGeoJson {
       List<dynamic> features = geoData['features'];
       String filename = p.basename(imagePath);
 
-      // Matches based on filename
-      features.removeWhere((f) => (f['properties']['path'] ?? "") == filename);
+      // Matches based on filename safely
+      features.removeWhere((f) => (f['properties']['path'] ?? f['properties']['name'] ?? "") == filename);
 
       features.add({
         "type": "Feature",
@@ -220,8 +222,7 @@ class MetadataGeoJson {
           final coords = geometry['coordinates'] ?? [0.0, 0.0];
 
           // DYNAMIC RECONSTRUCTION:
-          // Take the saved filename and join it with the CURRENT project directory path
-          String filename = props['name'] ?? props['path'] ?? "";
+          String filename = props['path'] ?? props['name'] ?? "";
           String currentValidPath = p.join(projectDir.path, filename);
 
           dataPoints.add({
@@ -248,7 +249,7 @@ class MetadataGeoJson {
         final Map<String, dynamic> geoJson = jsonDecode(await geoFile.readAsString());
         final List features = geoJson['features'];
 
-        features.removeWhere((f) => (f['properties']['path'] ?? "") == filename);
+        features.removeWhere((f) => (f['properties']['path'] ?? f['properties']['name'] ?? "") == filename);
 
         await geoFile.writeAsString(jsonEncode(geoJson));
       } catch (e) {
@@ -271,11 +272,13 @@ class MetadataGeoJson {
       final List features = geoJson['features'];
 
       for (var f in features) {
-        String savedName = f['properties']['path'] ?? "";
+        // FIX: Secure Lookup
+        String savedName = f['properties']['path'] ?? f['properties']['name'] ?? "";
         if (savedName == filename) {
           f['properties']['class'] = newClassName;
           if (newImagePath != null) {
             f['properties']['path'] = p.basename(newImagePath);
+            f['properties'].remove('name'); // Clean up old keys
           }
         }
       }
@@ -300,7 +303,8 @@ class MetadataGeoJson {
       final List features = geoJson['features'];
 
       for (var f in features) {
-        if ((f['properties']['path'] ?? "") == filename) {
+        // FIX: Secure Lookup
+        if ((f['properties']['path'] ?? f['properties']['name'] ?? "") == filename) {
           f['geometry']['coordinates'] = [lng, lat];
           f['properties']['time'] = time.toIso8601String();
         }

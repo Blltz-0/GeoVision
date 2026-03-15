@@ -302,14 +302,13 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
   }
 
   Future<void> _handleExport() async {
-
     final token = ExportCancellationToken();
 
     // 2. Show Progress Dialog
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => PopScope(
+      builder: (dialogContext) => PopScope( // Use dialogContext to avoid confusion
         canPop: false,
         child: AlertDialog(
           title: const Text("Exporting Project"),
@@ -325,7 +324,8 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
             TextButton(
               onPressed: () {
                 token.cancel();
-                Navigator.pop(context);
+                // Safely close just the dialog via dialogContext
+                Navigator.pop(dialogContext);
               },
               child: const Text("Cancel", style: TextStyle(color: Colors.red)),
             ),
@@ -340,9 +340,15 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
       // 3. Generate ZIP in temporary storage
       final String? tempZipPath = await ExportService.exportProject(widget.projectName, token: token);
 
-      if (mounted) Navigator.pop(context); // Close the progress dialog
+      if (!mounted) return;
 
-      if (tempZipPath != null && mounted) {
+      // 4. FIX: Only close the dialog if the user DID NOT press cancel.
+      // If they pressed cancel, the Cancel button already popped the dialog.
+      if (!token.isCancelled) {
+        Navigator.pop(context);
+      }
+
+      if (tempZipPath != null && !token.isCancelled) {
         final File tempFile = File(tempZipPath);
         final Uint8List fileBytes = await tempFile.readAsBytes();
 
@@ -356,14 +362,14 @@ class _ProjectContainerPageState extends State<ProjectContainerPage> {
         );
 
         if (outputFile != null) {
-          // 2. Pass the TEMP path to the toast, not the outputFile path
-          // The tempZipPath is a real file path the app definitely has access to.
           _showExportSuccessToast(outputFile, tempZipPath);
         }
       }
     } catch (e) {
       if (mounted) {
-        if (Navigator.canPop(context)) Navigator.pop(context);
+        if (!token.isCancelled) {
+          Navigator.pop(context);
+        }
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Export Failed: $e"), backgroundColor: Colors.red),
         );

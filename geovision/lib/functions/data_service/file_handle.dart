@@ -45,7 +45,7 @@ class MetadataFiles {
 
     // 3. Remove from upload history
     try {
-      final historyFile = await FileDirectories.getUploadHistoryFile(projectName); // Using helper
+      final historyFile = await FileDirectories.getUploadHistoryFile(projectName);
       if (await historyFile.exists()) {
         final Map<String, dynamic> historyMap = jsonDecode(await historyFile.readAsString());
         if (historyMap.containsKey(filename)) {
@@ -118,7 +118,7 @@ class MetadataFiles {
       Directory projectDir,
       String projectName,
       String className,
-      {String projectType = 'classification', Set<String>? existingNames}
+      {String projectType = 'classification', Set<String>? existingNames, String ext = '.jpg'}
       ) async {
     String cleanProject = projectName.replaceAll(RegExp(r'[^\w\s]+'), '').replaceAll(' ', '_');
     String cleanClass = className.replaceAll(RegExp(r'[^\w\s]+'), '').replaceAll(' ', '_');
@@ -132,8 +132,8 @@ class MetadataFiles {
     int counter = 1;
     while (true) {
       String fileName = projectType == 'segmentation'
-          ? "${cleanProject}_$counter.jpg"
-          : "${cleanProject}_${cleanClass}_$counter.jpg";
+          ? "${cleanProject}_$counter$ext"
+          : "${cleanProject}_${cleanClass}_$counter$ext";
 
       if (!names.contains(fileName)) {
         return fileName;
@@ -154,20 +154,37 @@ class MetadataFiles {
       String cleanClass = newClassName.replaceAll(RegExp(r'[^\w\s]+'), '').replaceAll(' ', '_');
       String oldFilename = p.basename(oldImagePath);
 
+      // A. If already correctly named, just update embedded EXIF and CSV
       if (oldFilename.startsWith("${cleanProject}_${cleanClass}_")) {
-        // Just update metadata
         await MetadataGeoJson.updateClassInCsv(projectName: projectName, imagePath: oldImagePath, newClassName: newClassName);
-        await MetadataExif.embedMetadata(filePath: oldImagePath, lat: 0, lng: 0, className: newClassName, updateClassOnly: true);
+        try {
+          await MetadataExif.embedMetadata(filePath: oldImagePath, lat: 0, lng: 0, className: newClassName, updateClassOnly: true);
+        } catch (e) {
+          debugPrint("Warning: Exif embedding failed: $e");
+        }
         return oldImagePath;
       }
 
-      String newFileName = await generateNextFileName(projectDir, projectName, newClassName, projectType: projectType);
+      // B. Determine correct file extension and generate path
+      String ext = p.extension(oldImagePath);
+      if (ext.isEmpty) ext = '.jpg';
+      String newFileName = await generateNextFileName(projectDir, projectName, newClassName, projectType: projectType, ext: ext);
       String newImagePath = p.join(projectDir.path, newFileName);
 
-      // 1. Rename the physical file
+      // 1. UPDATE CSV FIRST!
+      // Do this BEFORE renaming the physical file so the database row perfectly updates
+      // and timestamps are permanently preserved. Pass the FULL newImagePath.
+      await MetadataGeoJson.updateClassInCsv(
+        projectName: projectName,
+        imagePath: oldImagePath,
+        newImagePath: newImagePath,
+        newClassName: newClassName,
+      );
+
+      // 2. NOW rename the physical file safely
       await oldFile.rename(newImagePath);
 
-      // 2. Update upload_history.json ONLY if the file was an upload (exists in history)
+      // 3. Sync upload history map
       try {
         final historyFile = await FileDirectories.getUploadHistoryFile(projectName);
         if (await historyFile.exists()) {
@@ -182,18 +199,18 @@ class MetadataFiles {
         debugPrint("Error syncing history: $e");
       }
 
-      await MetadataGeoJson.updateClassInCsv(
-        projectName: projectName,
-        imagePath: oldImagePath,
-        newImagePath: newFileName,
-        newClassName: newClassName,
-      );
+      // 4. Safely embed metadata into the newly renamed file
+      try {
+        await MetadataExif.embedMetadata(filePath: newImagePath, lat: 0, lng: 0, className: newClassName, updateClassOnly: true);
+      } catch (e) {
+        debugPrint("Error embedding EXIF (non-fatal): $e");
+      }
 
-      // 3. Rebuild Project Data & Embed Metadata
-      await MetadataGeoJson.rebuildProjectData(projectName, projectType: projectType);
-      await MetadataExif.embedMetadata(filePath: newImagePath, lat: 0, lng: 0, className: newClassName, updateClassOnly: true);
+      // CRITICAL: We DO NOT call rebuildProjectData() here.
+      // Our CSV was just perfectly updated. Rebuilding now risks corrupting it.
 
       return newImagePath;
+
     } catch (e) {
       debugPrint("❌ Error tagging image: $e");
       return null;

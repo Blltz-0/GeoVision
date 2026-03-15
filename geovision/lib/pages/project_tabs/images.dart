@@ -181,6 +181,11 @@ class _ImagesPageState extends State<ImagesPage> {
             if (mainIndex != -1) {
               widget.images[mainIndex] = File(newPath);
             }
+
+            final tempIndex = _tempUploadedImages.indexWhere((f) => f.path == path);
+            if (tempIndex != -1) {
+              _tempUploadedImages[tempIndex] = File(newPath);
+            }
           });
           successCount++;
         }
